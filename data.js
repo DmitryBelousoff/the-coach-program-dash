@@ -82,13 +82,24 @@
     return Math.round(v * k) / k;
   }
 
+  // Slow, deterministic drift per program × metric, so a series of periods
+  // looks like a real trend instead of pure noise.
+  function wave(programId, key, bucket) {
+    const h = hash(programId + "|" + key);
+    const phase = (h % 1000) / 1000 * Math.PI * 2;
+    // Bounded scores (rating 1..5, sentiment) move much less than volumes.
+    const damp = key === "rating" ? 0.25 : key === "sentiment" ? 0.6 : 1;
+    const amp = (0.06 + ((h >>> 10) % 100) / 100 * 0.10) * damp; // 6–16%
+    return 1 + amp * Math.sin(bucket / 4 + phase) + amp * 0.4 * Math.sin(bucket / 1.7 + phase * 2);
+  }
+
   function jitter(base, period, bucket, programId) {
     const rand = rng(hash(programId + "|" + period + "|" + bucket));
     const scale = PERIOD_SCALE[period];
     const out = {};
     for (const key of Object.keys(base)) {
-      const noise = 1 + (rand() - 0.5) * 0.16; // ±8%
-      let v = base[key] * noise;
+      const noise = 1 + (rand() - 0.5) * 0.08; // ±4%
+      let v = base[key] * noise * wave(programId, key, bucket);
       if (VOLUME_KEYS.includes(key)) v *= scale;
       switch (key) {
         case "completionRate": case "returnRate": case "shareOfEngagement":
@@ -159,6 +170,21 @@
       }
 
       return { range, prevRange, source: "mock", programs };
+    },
+
+    // Series of `points` consecutive periods ending with the one that contains `date`.
+    // history({ programId, metric, period, date, points }) -> Promise<[{ from, to, value }]>
+    async history({ programId, metric, period, date, points }) {
+      const p = BASE_PROGRAMS.find((x) => x.id === programId);
+      if (!p) return [];
+      const range = rangeFor(period, date);
+      const bucket = bucketOf(period, range.to);
+      const out = [];
+      for (let i = points - 1; i >= 0; i--) {
+        const r = shift(range, PERIOD_DAYS[period] * i);
+        out.push({ from: r.from, to: r.to, value: jitter(p.base, period, bucket - i, p.id)[metric] });
+      }
+      return out;
     },
 
     addProgram(name) {

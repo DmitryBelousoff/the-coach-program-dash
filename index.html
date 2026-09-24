@@ -180,6 +180,40 @@
   }
   .delta.up{background:var(--up-dim); color:var(--up);}
   .delta.down{background:var(--down-dim); color:var(--down);}
+  button.delta{border:0; cursor:pointer; line-height:inherit; transition:box-shadow .15s, transform .15s;}
+  button.delta:hover{box-shadow:inset 0 0 0 1px currentColor;}
+  button.delta:active{transform:scale(0.96);}
+
+  /* ---------- trend dialog ---------- */
+  dialog.trend{width:min(860px, calc(100vw - 32px)); padding:30px 32px 26px;}
+  .trend-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px;}
+  .trend-head h2{font-size:22px; text-wrap:balance;}
+  .trend-head p{margin:0;}
+  .close{
+    flex:none; width:36px; height:36px; border-radius:10px; border:0; background:none; cursor:pointer;
+    color:var(--ink-mute); display:grid; place-items:center;
+  }
+  .close:hover{background:var(--chip); color:var(--ink);}
+  .trend-stats{display:flex; gap:28px; flex-wrap:wrap; margin-top:22px;}
+  .stat-label{display:block; font-size:13px; color:var(--ink-mute);}
+  .stat-val{display:block; margin-top:4px; font-family:var(--font-mono); font-size:18px; font-weight:600; color:var(--ink-mute); font-variant-numeric:tabular-nums;}
+  .stat-val.up{color:var(--up);}
+  .stat-val.down{color:var(--down);}
+  .stat-val.now{color:var(--ink);}
+  .chart{position:relative; margin-top:18px;}
+  .chart svg{display:block; width:100%; height:auto; overflow:visible;}
+  .chart .grid{stroke:var(--hairline); stroke-width:1;}
+  .chart .axis{stroke:var(--hairline-strong); stroke-width:1;}
+  .chart .tick{font-family:var(--font-mono); font-size:11px; fill:var(--ink-mute);}
+  .chart .crosshair{stroke:var(--hairline-strong); stroke-width:1; stroke-dasharray:3 3;}
+  .chart .hit{fill:transparent; cursor:crosshair;}
+  .tip{
+    position:absolute; pointer-events:none; transform:translate(-50%, calc(-100% - 12px));
+    background:var(--ink); color:var(--surface); border-radius:8px; padding:6px 10px; white-space:nowrap;
+    font-size:12px; line-height:1.35; box-shadow:0 6px 18px rgba(0,0,0,0.18);
+  }
+  .tip b{display:block; font-family:var(--font-mono); font-size:13px; font-weight:600;}
+  .trend-note{margin:10px 0 0; font-size:12px; color:var(--ink-mute);}
 
   .footnote{margin-top:16px; font-size:13px; color:var(--ink-mute); line-height:1.5;}
   .footnote b{color:var(--ink-dim); font-weight:600;}
@@ -250,7 +284,7 @@
 
   <p class="footnote">
     <b>Health score</b> (кольцо у названия) — среднее из Completion Rate, Return Rate, оценки, сентимента и Catalog Pull, нормированных к 0–100.
-    Бейджи показывают изменение к предыдущему периоду такой же длины. Клик по заголовку столбца — сортировка.
+    Бейджи показывают изменение к предыдущему периоду такой же длины; клик по бейджу открывает динамику. Клик по заголовку столбца — сортировка.
   </p>
 </div>
 
@@ -265,6 +299,21 @@
       <button type="submit" class="btn-primary" value="ok">Добавить</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="trend-dialog" class="trend" aria-labelledby="trend-title">
+  <div class="trend-head">
+    <div>
+      <h2 id="trend-title">—</h2>
+      <p id="trend-desc"></p>
+    </div>
+    <button type="button" class="close" id="trend-close" aria-label="Закрыть">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+    </button>
+  </div>
+  <div class="trend-stats" id="trend-stats"></div>
+  <div class="chart" id="trend-chart"></div>
+  <p class="trend-note" id="trend-note"></p>
 </dialog>
 
 <script src="data.js"></script>
@@ -359,16 +408,36 @@
     </div>`;
   }
 
-  function delta(cur, prev, col) {
-    if (cur == null || prev == null) return "";
+  // Relative change in percent, rounded to 0.1; null when it can't be computed.
+  function pctChange(cur, prev) {
+    if (cur == null || prev == null) return null;
     const change = prev === 0 ? 0 : (cur - prev) / Math.abs(prev);
-    const pct = Math.round(change * 1000) / 10;
-    const prevText = col.fmt(prev, {});
-    const title = `Пред. период: ${prevText.val}${prevText.unit ? " " + prevText.unit : ""}`;
-    if (Math.abs(pct) < 0.5) return `<span class="delta" title="${title}">· 0%</span>`;
-    const good = col.lowerIsBetter ? pct < 0 : pct > 0;
-    const arrow = pct > 0 ? "▲" : "▼";
-    return `<span class="delta ${good ? "up" : "down"}" title="${title}">${arrow} ${nf1.format(Math.abs(pct))}%</span>`;
+    return Math.round(change * 1000) / 10;
+  }
+
+  // "up" | "down" | "" (flat) — by whether the change is good for this metric.
+  function trendClass(pct, col) {
+    if (pct == null || Math.abs(pct) < 0.5) return "";
+    return (col.lowerIsBetter ? pct < 0 : pct > 0) ? "up" : "down";
+  }
+
+  function pctText(pct) {
+    if (pct == null) return "—";
+    if (Math.abs(pct) < 0.5) return "· 0%";
+    return (pct > 0 ? "▲ " : "▼ ") + nf1.format(Math.abs(pct)) + "%";
+  }
+
+  function valueText(v, col) {
+    const f = col.fmt(v, {});
+    return f.val + (f.unit ? " " + f.unit : "");
+  }
+
+  function delta(p, col) {
+    const cur = p.current[col.key], prev = p.previous[col.key];
+    const pct = pctChange(cur, prev);
+    if (pct == null) return "";
+    const title = `Пред. период: ${valueText(prev, col)} · открыть динамику`;
+    return `<button type="button" class="delta ${trendClass(pct, col)}" data-trend="${escapeHTML(p.id)}" data-metric="${col.key}" title="${title}">${pctText(pct)}</button>`;
   }
 
   function renderHead() {
@@ -409,7 +478,7 @@
         const f = col.fmt(v, p.current);
         return `<td><div class="cell">
           <div><span class="val">${f.val}</span>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}${f.sub ? `<span class="sub">${f.sub}</span>` : ""}</div>
-          ${delta(v, p.previous[col.key], col)}
+          ${delta(p, col)}
         </div></td>`;
       }).join("");
       return `<tr>
@@ -438,6 +507,142 @@
       el.table.classList.remove("loading");
     }
   }
+
+  // ---------- trend dialog ----------
+  const TREND_POINTS = { week: 11, month: 12, quarter: 8 };
+  const PERIOD_WORDS = {
+    week: { prev: "к прошлой неделе", ago: (n) => `к ${n} нед. назад` },
+    month: { prev: "к прошлому месяцу", ago: (n) => `к ${n} мес. назад` },
+    quarter: { prev: "к прошлым 3 месяцам", ago: (n) => `к ${n * 3} мес. назад` },
+  };
+  const dm = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" });
+  const my = new Intl.DateTimeFormat("ru-RU", { month: "short", year: "2-digit" });
+  // Axis label for a period start: dd.mm for weeks/months, "мар. 26" for quarters (spans years).
+  const axisDate = (d) => state.period === "quarter" ? my.format(d).replace(" г.", "") : dm.format(d);
+  const trend = {
+    dialog: document.getElementById("trend-dialog"),
+    title: document.getElementById("trend-title"),
+    desc: document.getElementById("trend-desc"),
+    stats: document.getElementById("trend-stats"),
+    chart: document.getElementById("trend-chart"),
+    note: document.getElementById("trend-note"),
+  };
+
+  function niceTicks(min, max, count) {
+    if (min === max) { const pad = Math.abs(min) * 0.1 || 1; min -= pad; max += pad; }
+    const raw = (max - min) / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+    const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v / step) * step);
+    return ticks;
+  }
+
+  function tickText(v, col) {
+    // Axis labels: same units as the table, but compact.
+    const f = col.fmt(v, {});
+    return f.val + (f.unit === "%" ? "%" : "");
+  }
+
+  function drawChart(series, col) {
+    // Size the viewBox to the real width so text stays at its CSS size on phones.
+    const W = Math.max(300, Math.round(trend.chart.clientWidth || 800));
+    const H = W < 520 ? 220 : 280, m = { t: 14, r: 24, b: 30, l: W < 520 ? 44 : 58 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const vals = series.map((d) => d.value);
+    const ticks = niceTicks(Math.min(...vals), Math.max(...vals), 4);
+    const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+    const x = (i) => m.l + (series.length === 1 ? iw / 2 : (i / (series.length - 1)) * iw);
+    const y = (v) => m.t + ih - ((v - y0) / (y1 - y0)) * ih;
+    const last = series.length - 1;
+    const cls = trendClass(pctChange(series[last].value, series[0].value), col);
+    const stroke = cls === "up" ? "var(--up)" : cls === "down" ? "var(--down)" : "var(--ink-dim)";
+    const isToday = state.date === todayISO();
+
+    const grid = ticks.map((t) => `
+      <line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/>
+      <text class="tick" x="${m.l - 10}" y="${y(t) + 4}" text-anchor="end">${tickText(t, col)}</text>`).join("");
+    const labelEvery = series.length > 8 || W < 520 ? (W < 520 && series.length > 8 ? 3 : 2) : 1;
+    const xTicks = series.map((d, i) => {
+      if (i !== last && (last - i) % labelEvery !== 0) return "";
+      const label = i === last ? (isToday ? "сейчас" : axisDate(d.to)) : axisDate(d.from);
+      return `<text class="tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${label}</text>`;
+    }).join("");
+    const solid = series.slice(0, last).map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join("");
+    const dots = series.map((d, i) => i === last
+      ? `<circle cx="${x(i)}" cy="${y(d.value)}" r="6" fill="var(--gold)" stroke="var(--surface)" stroke-width="2"/>`
+      : `<circle cx="${x(i)}" cy="${y(d.value)}" r="4.5" fill="var(--surface)" stroke="${stroke}" stroke-width="2"/>`).join("");
+    const band = iw / Math.max(series.length - 1, 1);
+    const hits = series.map((d, i) => `<rect class="hit" data-i="${i}" x="${x(i) - band / 2}" y="${m.t}" width="${band}" height="${ih}"/>`).join("");
+
+    trend.chart.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Динамика: ${escapeHTML(col.title)}">
+        ${grid}
+        <line class="axis" x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}"/>
+        <line class="crosshair" id="crosshair" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" visibility="hidden"/>
+        ${last > 0 ? `<path d="${solid}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <line x1="${x(last - 1)}" y1="${y(series[last - 1].value)}" x2="${x(last)}" y2="${y(series[last].value)}" stroke="var(--gold)" stroke-width="2" stroke-dasharray="4 5" stroke-linecap="round"/>` : ""}
+        ${dots}
+        ${xTicks}
+        ${hits}
+      </svg>
+      <div class="tip" id="tip" hidden></div>`;
+
+    const svg = trend.chart.querySelector("svg");
+    const tip = trend.chart.querySelector("#tip");
+    const cross = trend.chart.querySelector("#crosshair");
+    const show = (i) => {
+      const d = series[i];
+      const rect = svg.getBoundingClientRect(), k = rect.width / W;
+      cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+      const period = i === last && isToday ? "текущий период" : dm.format(d.from) + " – " + dm.format(d.to);
+      tip.innerHTML = `<b>${valueText(d.value, col)}</b>${period}`;
+      tip.style.left = Math.min(Math.max(x(i) * k, 70), rect.width - 70) + "px";
+      tip.style.top = y(d.value) * k + "px";
+      tip.hidden = false;
+    };
+    const hide = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+    svg.addEventListener("pointermove", (e) => {
+      const r = e.target.closest(".hit");
+      if (r) show(Number(r.dataset.i)); else hide();
+    });
+    svg.addEventListener("pointerleave", hide);
+  }
+
+  async function openTrend(programId, metric) {
+    const p = state.data.programs.find((x) => x.id === programId);
+    const col = COLUMNS.find((c) => c.key === metric);
+    if (!p || !col) return;
+    const n = TREND_POINTS[state.period];
+    const series = await window.DashboardData.history({
+      programId, metric, period: state.period, date: parseISO(state.date), points: n,
+    });
+    if (!series.length) return;
+    const words = PERIOD_WORDS[state.period];
+    const cur = series[series.length - 1].value;
+    const vsPrev = pctChange(cur, series[series.length - 2] && series[series.length - 2].value);
+    const vsFirst = pctChange(cur, series[0].value);
+
+    trend.title.textContent = `${p.name} · ${col.title}`;
+    trend.desc.textContent = col.desc;
+    trend.stats.innerHTML = `
+      <div><span class="stat-label">сейчас</span><span class="stat-val now">${valueText(cur, col)}</span></div>
+      <div><span class="stat-label">${words.prev}</span><span class="stat-val ${trendClass(vsPrev, col)}">${pctText(vsPrev)}</span></div>
+      <div><span class="stat-label">${words.ago(n - 1)}</span><span class="stat-val ${trendClass(vsFirst, col)}">${pctText(vsFirst)}</span></div>`;
+    trend.note.textContent = state.date === todayISO()
+      ? "Пунктир — текущий, ещё не закончившийся период."
+      : "Пунктир — выбранный период.";
+    if (!trend.dialog.open) trend.dialog.showModal();
+    drawChart(series, col);
+  }
+
+  document.getElementById("trend-close").addEventListener("click", () => trend.dialog.close());
+  trend.dialog.addEventListener("click", (e) => {
+    // Click on the backdrop (outside the dialog box) closes it.
+    const r = trend.dialog.getBoundingClientRect();
+    if (e.target === trend.dialog && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) trend.dialog.close();
+  });
 
   // ---------- events ----------
   document.querySelectorAll("[data-period]").forEach((btn) => {
@@ -471,6 +676,8 @@
   });
 
   el.body.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-trend]");
+    if (chip) { openTrend(chip.dataset.trend, chip.dataset.metric); return; }
     const btn = e.target.closest("[data-remove]");
     if (!btn) return;
     window.DashboardData.removeProgram(btn.dataset.remove);
