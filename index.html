@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Program Health</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F4F3EF;
+    --surface:#FFFFFF;
+    --surface-2:#F0EFEA;
+    --hairline: rgba(40,36,24,0.08);
+    --hairline-strong: rgba(40,36,24,0.14);
+    --ink:#1C1B17;
+    --ink-dim:#5E5B52;
+    --ink-mute:#9A968B;
+    --gold:#8A6417;
+    --gold-strong:#74520F;
+    --gold-dim: rgba(138,100,23,0.12);
+    --up:#3F7A4A;
+    --up-dim: rgba(63,122,74,0.11);
+    --down:#A6493F;
+    --down-dim: rgba(166,73,63,0.10);
+    --chip: rgba(40,36,24,0.05);
+    --shadow: 0 1px 2px rgba(40,36,24,0.04), 0 12px 40px rgba(40,36,24,0.06);
+    --font-body: 'Inter', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --row-hover:#FBFAF7;
+    --row-hover-sticky:#EAE8E1;
+    --ring-track:rgba(40,36,24,0.10);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#17160F; --surface:#201E17; --surface-2:#1A1913;
+      --hairline:rgba(240,230,200,0.08); --hairline-strong:rgba(240,230,200,0.16);
+      --ink:#EEEBE2; --ink-dim:#B5B0A3; --ink-mute:#827D71;
+      --gold:#C7973A; --gold-strong:#A87B26; --gold-dim:rgba(199,151,58,0.16);
+      --up:#7DBF87; --up-dim:rgba(125,191,135,0.13); --down:#E08A7E; --down-dim:rgba(224,138,126,0.13);
+      --chip:rgba(240,230,200,0.07); --row-hover:#26241C; --row-hover-sticky:#221F18; --ring-track:rgba(240,230,200,0.12);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#17160F; --surface:#201E17; --surface-2:#1A1913;
+    --hairline:rgba(240,230,200,0.08); --hairline-strong:rgba(240,230,200,0.16);
+    --ink:#EEEBE2; --ink-dim:#B5B0A3; --ink-mute:#827D71;
+    --gold:#C7973A; --gold-strong:#A87B26; --gold-dim:rgba(199,151,58,0.16);
+    --up:#7DBF87; --up-dim:rgba(125,191,135,0.13); --down:#E08A7E; --down-dim:rgba(224,138,126,0.13);
+    --chip:rgba(240,230,200,0.07); --row-hover:#26241C; --row-hover-sticky:#221F18; --ring-track:rgba(240,230,200,0.12);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0; padding:0;}
+  body{
+    background:
+      radial-gradient(90% 60% at 100% 0%, rgba(138,100,23,0.05), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+
+  .page{max-width:1760px; margin:0 auto; padding:40px 48px 80px;}
+
+  /* ---------- header ---------- */
+  .header{
+    display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap;
+    padding-bottom:28px; border-bottom:1px solid var(--hairline);
+  }
+  .eyebrow{
+    font-family:var(--font-mono); font-size:12px; letter-spacing:0.22em;
+    text-transform:uppercase; color:var(--gold); margin:0 0 12px;
+  }
+  h1{font-size:36px; line-height:1.1; font-weight:800; letter-spacing:-0.02em; margin:0;}
+  .subtitle{margin:12px 0 0; font-size:14px; color:var(--ink-dim); display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+  .badge{
+    font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em;
+    padding:3px 8px; border-radius:999px; background:var(--gold-dim); color:var(--gold-strong);
+  }
+
+  .controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+  .segmented{
+    display:flex; padding:4px; gap:2px; border-radius:12px;
+    background:var(--surface-2); border:1px solid var(--hairline);
+  }
+  .segmented button{
+    font:inherit; font-size:15px; font-weight:600; color:var(--ink-dim);
+    background:none; border:0; border-radius:9px; padding:9px 16px; cursor:pointer;
+    transition:background .15s, color .15s;
+  }
+  .segmented button:hover{color:var(--ink);}
+  .segmented button[aria-pressed="true"]{background:var(--gold); color:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.12);}
+
+  .date-input{
+    font:inherit; font-size:15px; font-weight:500; color:var(--ink);
+    height:46px; padding:0 12px; border-radius:12px;
+    background:var(--surface); border:1px solid var(--hairline-strong);
+  }
+  .btn-primary{
+    font:inherit; font-size:15px; font-weight:700; color:#fff; cursor:pointer;
+    height:46px; padding:0 22px; border-radius:12px; border:0;
+    background:linear-gradient(180deg, var(--gold) 0%, var(--gold-strong) 100%);
+    box-shadow:0 1px 2px rgba(0,0,0,0.12), 0 6px 16px rgba(138,100,23,0.22);
+  }
+  .btn-primary:hover{filter:brightness(1.06);}
+  .btn-ghost{
+    font:inherit; font-size:15px; font-weight:600; color:var(--ink-dim); cursor:pointer;
+    height:42px; padding:0 18px; border-radius:10px; border:1px solid var(--hairline-strong); background:var(--surface);
+  }
+  button:focus-visible, input:focus-visible{outline:2px solid var(--gold); outline-offset:2px;}
+
+  /* ---------- table ---------- */
+  .card{
+    margin-top:36px; background:var(--surface); border:1px solid var(--hairline);
+    border-radius:16px; box-shadow:var(--shadow); overflow:hidden;
+  }
+  .scroller{overflow-x:auto; scrollbar-width:thin; scrollbar-color:rgba(40,36,24,0.18) transparent;}
+  table{border-collapse:separate; border-spacing:0; min-width:100%;}
+
+  th, td{text-align:left; vertical-align:middle; white-space:nowrap;}
+  thead th{
+    background:var(--surface-2); padding:22px 20px; vertical-align:middle;
+    border-bottom:1px solid var(--hairline); white-space:normal;
+  }
+  thead th.metric{min-width:175px; max-width:210px; cursor:pointer; user-select:none;}
+  thead th.metric:hover .m-title{color:var(--ink);}
+  .m-title{
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--font-mono); font-size:12px; font-weight:500; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--ink-dim);
+  }
+  .m-desc{display:block; margin-top:6px; font-size:13px; line-height:1.4; color:var(--ink-mute); font-weight:400;}
+  .sort-ind{opacity:0; font-size:10px; color:var(--gold); transition:opacity .15s;}
+  th[aria-sort] .sort-ind{opacity:1;}
+  th.metric:hover .sort-ind{opacity:.5;}
+  th[aria-sort] .sort-ind{opacity:1;}
+
+  .sticky{position:sticky; left:0; z-index:2;}
+  thead th.sticky{z-index:3; min-width:270px; cursor:pointer;}
+  tbody td.sticky{background:var(--surface-2);}
+  .scroller.scrolled .sticky{box-shadow:6px 0 12px -8px rgba(40,36,24,0.18);}
+
+  tbody td{padding:0 20px; height:70px; border-bottom:1px solid var(--hairline); background:var(--surface);}
+  tbody tr:last-child td{border-bottom:0;}
+  tbody tr:hover td{background:var(--row-hover);}
+  tbody tr:hover td.sticky{background:var(--row-hover-sticky);}
+
+  .prog{display:flex; align-items:center; gap:16px;}
+  .ring{position:relative; width:42px; height:42px; flex:none;}
+  .ring svg{display:block; transform:rotate(-90deg);}
+  .ring span{
+    position:absolute; inset:0; display:grid; place-items:center;
+    font-family:var(--font-mono); font-size:12px; font-weight:600;
+  }
+  .prog-name{font-size:17px; font-weight:600;}
+  .prog-tag{display:block; font-size:12px; color:var(--ink-mute); font-weight:400; margin-top:2px;}
+  .remove{
+    margin-left:auto; width:28px; height:28px; border-radius:8px; border:0; background:none;
+    color:var(--ink-mute); cursor:pointer; font-size:18px; line-height:1; opacity:0;
+  }
+  tr:hover .remove, .remove:focus-visible{opacity:1;}
+  .remove:hover{background:var(--down-dim); color:var(--down);}
+
+  .cell{display:flex; align-items:center; gap:10px;}
+  .val{font-family:var(--font-mono); font-size:17px; font-weight:500; font-variant-numeric:tabular-nums;}
+  .unit{font-family:var(--font-mono); font-size:12px; color:var(--ink-mute); margin-left:3px;}
+  .sub{display:block; font-family:var(--font-mono); font-size:11px; color:var(--ink-mute); margin-top:3px;}
+  .empty{font-family:var(--font-mono); color:var(--ink-mute);}
+
+  .delta{
+    font-family:var(--font-mono); font-size:11px; font-weight:500; white-space:nowrap;
+    padding:4px 8px; border-radius:999px; background:var(--chip); color:var(--ink-mute);
+  }
+  .delta.up{background:var(--up-dim); color:var(--up);}
+  .delta.down{background:var(--down-dim); color:var(--down);}
+
+  .footnote{margin-top:16px; font-size:13px; color:var(--ink-mute); line-height:1.5;}
+  .footnote b{color:var(--ink-dim); font-weight:600;}
+
+  .loading tbody{opacity:.45; transition:opacity .15s;}
+
+  /* ---------- dialog ---------- */
+  dialog{
+    border:0; border-radius:16px; padding:28px; width:min(440px, calc(100vw - 32px));
+    background:var(--surface); color:var(--ink); box-shadow:0 30px 80px rgba(0,0,0,0.2);
+  }
+  dialog::backdrop{background:rgba(28,27,23,0.35); backdrop-filter:blur(2px);}
+  dialog h2{margin:0 0 6px; font-size:22px; font-weight:800; letter-spacing:-0.01em;}
+  dialog p{margin:0 0 20px; font-size:14px; color:var(--ink-dim); line-height:1.5;}
+  dialog label{display:block; font-family:var(--font-mono); font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:8px;}
+  dialog input{
+    width:100%; font:inherit; font-size:16px; padding:12px 14px; border-radius:10px;
+    border:1px solid var(--hairline-strong); background:var(--surface); color:var(--ink);
+  }
+  .dialog-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:24px;}
+  .dialog-actions .btn-primary{height:42px;}
+
+  @media (max-width: 720px){
+    .page{padding:24px 16px 60px;}
+    h1{font-size:26px;}
+    .controls{width:100%;}
+    .segmented{flex:1;}
+    .segmented button{flex:1; padding:9px 8px; font-size:14px;}
+    .date-input{flex:1;}
+    .btn-primary{width:100%;}
+    thead th.sticky{min-width:170px;}
+    .ring{display:none;}
+    .prog-name{font-size:15px;}
+    .card{margin-top:24px;}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="header">
+    <div>
+      <p class="eyebrow">Program Health</p>
+      <h1>Панель эффективности программ</h1>
+      <p class="subtitle">
+        <span id="range-label">—</span>
+        <span class="badge" id="source-badge" hidden>Демо-данные</span>
+      </p>
+    </div>
+    <div class="controls">
+      <div class="segmented" role="group" aria-label="Период">
+        <button type="button" data-period="week" aria-pressed="true">Неделя</button>
+        <button type="button" data-period="month" aria-pressed="false">Месяц</button>
+        <button type="button" data-period="quarter" aria-pressed="false">3 месяца</button>
+      </div>
+      <input type="date" class="date-input" id="date" aria-label="Конец периода">
+      <button type="button" class="btn-primary" id="add-btn">+ Программа</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <div class="scroller" id="scroller">
+      <table id="table">
+        <thead><tr id="head-row"></tr></thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="footnote">
+    <b>Health score</b> (кольцо у названия) — среднее из Completion Rate, Return Rate, оценки, сентимента и Catalog Pull, нормированных к 0–100.
+    Бейджи показывают изменение к предыдущему периоду такой же длины. Клик по заголовку столбца — сортировка.
+  </p>
+</div>
+
+<dialog id="add-dialog">
+  <form method="dialog" id="add-form">
+    <h2>Новая программа</h2>
+    <p>Программа появится в таблице без данных — метрики подтянутся, когда подключим Amplitude.</p>
+    <label for="program-name">Название</label>
+    <input id="program-name" name="name" required maxlength="60" autocomplete="off" placeholder="Например, Deep Connection">
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="cancel-btn">Отмена</button>
+      <button type="submit" class="btn-primary" value="ok">Добавить</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  const nf0 = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+  const nf1 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const nf2 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const plain = (v) => ({ val: nf0.format(v) });
+
+  // key: field on Metrics; value(m) may combine fields; lowerIsBetter flips delta colour.
+  const COLUMNS = [
+    { key: "totalUsers", title: "Total Users", desc: "Уникальные пользователи, проходящие программу сейчас", fmt: plain },
+    { key: "entryOrganic", title: "Entry Users · Organic", desc: "Начали путь в приложении с этой программы (органика)", fmt: plain },
+    { key: "entryWeb", title: "Entry Users · Web", desc: "Начали путь в приложении с этой программы (веб)", fmt: plain },
+    { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
+    { key: "lifetimeWeb", title: "Lifetime · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
+    { key: "completionRate", title: "Completion Rate", desc: "Доля прошедших программу до конца", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
+    { key: "returnRate", title: "Return Rate", desc: "Вернулись в программу на следующий день после первого занятия", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
+    { key: "rating", title: "User Satisfaction", desc: "Средняя оценка программы и сентимент отзывов",
+      fmt: (v, m) => ({ val: nf1.format(v), unit: "/5", sub: m.sentiment == null ? null : "сентимент " + (m.sentiment > 0 ? "+" : "") + nf2.format(m.sentiment) }) },
+    { key: "catalogPull", title: "Catalog Pull", desc: "Среднее число других программ, начатых после неё", fmt: (v) => ({ val: nf1.format(v) }) },
+    { key: "shareOfEngagement", title: "Share of Engagement", desc: "Доля всех завершённых уроков и упражнений в приложении", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
+    { key: "shares", title: "Sharing", desc: "Сколько раз программой поделились", fmt: plain },
+    { key: "monetization", title: "Monetization", desc: "Доход от консультаций, товаров и доп. продуктов, инициированных программой", fmt: (v) => ({ val: nf0.format(v), unit: "$" }) },
+    { key: "estimatedRevenue", title: "Estimated Revenue", desc: "Совокупная бизнес-выручка, атрибуцированная программе", fmt: (v) => ({ val: nf0.format(v), unit: "$" }) },
+  ];
+
+  const state = {
+    period: "week",
+    date: todayISO(),
+    sort: { key: null, dir: "desc" },
+    data: null,
+  };
+
+  const el = {
+    head: document.getElementById("head-row"),
+    body: document.getElementById("body"),
+    table: document.getElementById("table"),
+    scroller: document.getElementById("scroller"),
+    date: document.getElementById("date"),
+    range: document.getElementById("range-label"),
+    badge: document.getElementById("source-badge"),
+    dialog: document.getElementById("add-dialog"),
+    form: document.getElementById("add-form"),
+    name: document.getElementById("program-name"),
+  };
+
+  function todayISO() {
+    const d = new Date();
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  function parseISO(s) {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  const dayMonth = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" });
+  const dayMonthYear = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+  function formatRange(r) {
+    return dayMonth.format(r.from) + " – " + dayMonthYear.format(r.to).replace(" г.", "");
+  }
+
+  function healthScore(m) {
+    const parts = [
+      m.completionRate,
+      m.returnRate,
+      m.rating == null ? null : (m.rating - 1) / 4,
+      m.sentiment == null ? null : (m.sentiment + 1) / 2,
+      m.catalogPull == null ? null : Math.min(m.catalogPull / 4, 1),
+    ].filter((v) => v != null);
+    if (!parts.length) return null;
+    return Math.round(100 * parts.reduce((a, b) => a + b, 0) / parts.length);
+  }
+
+  function ring(score) {
+    const r = 18, c = 2 * Math.PI * r;
+    const pct = score == null ? 0 : score / 100;
+    return `<div class="ring" title="Health score">
+      <svg width="42" height="42" viewBox="0 0 42 42" aria-hidden="true">
+        <circle cx="21" cy="21" r="${r}" fill="none" stroke="var(--ring-track)" stroke-width="3"/>
+        <circle cx="21" cy="21" r="${r}" fill="none" stroke="var(--gold)" stroke-width="3" stroke-linecap="round"
+          stroke-dasharray="${(c * pct).toFixed(2)} ${c.toFixed(2)}"/>
+      </svg>
+      <span>${score == null ? "—" : score}</span>
+    </div>`;
+  }
+
+  function delta(cur, prev, col) {
+    if (cur == null || prev == null) return "";
+    const change = prev === 0 ? 0 : (cur - prev) / Math.abs(prev);
+    const pct = Math.round(change * 1000) / 10;
+    const prevText = col.fmt(prev, {});
+    const title = `Пред. период: ${prevText.val}${prevText.unit ? " " + prevText.unit : ""}`;
+    if (Math.abs(pct) < 0.5) return `<span class="delta" title="${title}">· 0%</span>`;
+    const good = col.lowerIsBetter ? pct < 0 : pct > 0;
+    const arrow = pct > 0 ? "▲" : "▼";
+    return `<span class="delta ${good ? "up" : "down"}" title="${title}">${arrow} ${nf1.format(Math.abs(pct))}%</span>`;
+  }
+
+  function renderHead() {
+    const s = state.sort;
+    const ind = (key) => s.key === key ? (s.dir === "desc" ? "▼" : "▲") : "▼";
+    const aria = (key) => s.key === key ? ` aria-sort="${s.dir === "desc" ? "descending" : "ascending"}"` : "";
+    el.head.innerHTML =
+      `<th class="sticky" data-sort="__score"${aria("__score")}>
+        <span class="m-title">Программа <span class="sort-ind">${ind("__score")}</span></span>
+      </th>` +
+      COLUMNS.map((col) => `
+        <th class="metric" data-sort="${col.key}"${aria(col.key)}>
+          <span class="m-title">${col.title} <span class="sort-ind">${ind(col.key)}</span></span>
+          <span class="m-desc">${col.desc}</span>
+        </th>`).join("");
+  }
+
+  function sortedPrograms() {
+    const list = state.data.programs.slice();
+    const { key, dir } = state.sort;
+    if (!key) return list;
+    const get = (p) => key === "__score" ? healthScore(p.current) : p.current[key];
+    list.sort((a, b) => {
+      const va = get(a), vb = get(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      return dir === "desc" ? vb - va : va - vb;
+    });
+    return list;
+  }
+
+  function renderBody() {
+    el.body.innerHTML = sortedPrograms().map((p) => {
+      const cells = COLUMNS.map((col) => {
+        const v = p.current[col.key];
+        if (v == null) return `<td><span class="empty">—</span></td>`;
+        const f = col.fmt(v, p.current);
+        return `<td><div class="cell">
+          <div><span class="val">${f.val}</span>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}${f.sub ? `<span class="sub">${f.sub}</span>` : ""}</div>
+          ${delta(v, p.previous[col.key], col)}
+        </div></td>`;
+      }).join("");
+      return `<tr>
+        <td class="sticky"><div class="prog">
+          ${ring(healthScore(p.current))}
+          <div class="prog-name">${escapeHTML(p.name)}${p.custom ? `<span class="prog-tag">нет данных</span>` : ""}</div>
+          ${p.custom ? `<button type="button" class="remove" data-remove="${escapeHTML(p.id)}" aria-label="Удалить программу" title="Удалить">×</button>` : ""}
+        </div></td>
+        ${cells}
+      </tr>`;
+    }).join("");
+  }
+
+  async function load() {
+    el.table.classList.add("loading");
+    try {
+      state.data = await window.DashboardData.load({ period: state.period, date: parseISO(state.date) });
+      el.range.textContent = formatRange(state.data.range) + " · сравнение с " + formatRange(state.data.prevRange);
+      el.badge.hidden = state.data.source !== "mock";
+      renderHead();
+      renderBody();
+    } catch (e) {
+      el.body.innerHTML = `<tr><td class="sticky" colspan="${COLUMNS.length + 1}"><span class="empty">Не удалось загрузить данные</span></td></tr>`;
+      console.error(e);
+    } finally {
+      el.table.classList.remove("loading");
+    }
+  }
+
+  // ---------- events ----------
+  document.querySelectorAll("[data-period]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.period = btn.dataset.period;
+      document.querySelectorAll("[data-period]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+      load();
+    });
+  });
+
+  el.date.value = state.date;
+  el.date.max = todayISO();
+  el.date.addEventListener("change", () => {
+    if (!el.date.value) { el.date.value = state.date; return; }
+    state.date = el.date.value;
+    load();
+  });
+
+  el.head.addEventListener("click", (e) => {
+    const th = e.target.closest("th[data-sort]");
+    if (!th || !state.data) return;
+    const key = th.dataset.sort;
+    if (state.sort.key === key) {
+      if (state.sort.dir === "desc") state.sort.dir = "asc";
+      else state.sort = { key: null, dir: "desc" };
+    } else {
+      state.sort = { key, dir: "desc" };
+    }
+    renderHead();
+    renderBody();
+  });
+
+  el.body.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-remove]");
+    if (!btn) return;
+    window.DashboardData.removeProgram(btn.dataset.remove);
+    load();
+  });
+
+  el.scroller.addEventListener("scroll", () => {
+    el.scroller.classList.toggle("scrolled", el.scroller.scrollLeft > 0);
+  }, { passive: true });
+
+  document.getElementById("add-btn").addEventListener("click", () => {
+    el.name.value = "";
+    el.dialog.showModal();
+    el.name.focus();
+  });
+  document.getElementById("cancel-btn").addEventListener("click", () => el.dialog.close());
+  el.form.addEventListener("submit", (e) => {
+    const name = el.name.value.trim();
+    if (!name) { e.preventDefault(); return; }
+    window.DashboardData.addProgram(name);
+    load();
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
