@@ -84,61 +84,74 @@ async function allRecords(table, fields) {
 
 const eq = (a, b) => a.toLowerCase() === b.toLowerCase();
 
-// Finds the lessons table and the exact field names via the Meta API (needs the
-// schema.bases:read scope). If Program is a link to another table, also returns how
-// to turn linked record ids into program names.
-async function resolveSchema() {
+// Finds every table in the base that has both columns (or the one named in
+// AIRTABLE_TABLE) via the Meta API, which needs the schema.bases:read scope.
+// If Program is a link to another table, also says how to turn linked record ids
+// into program names.
+async function resolveSchemas() {
   let tables;
   try {
     tables = (await airtable(`meta/bases/${AIRTABLE_BASE}/tables`)).tables || [];
   } catch (e) {
-    if (process.env.AIRTABLE_TABLE) return { table: process.env.AIRTABLE_TABLE, program: PROGRAM_FIELD, headline: HEADLINE_FIELD };
+    if (process.env.AIRTABLE_TABLE) {
+      return { all: [], schemas: [{ table: process.env.AIRTABLE_TABLE, name: process.env.AIRTABLE_TABLE, program: PROGRAM_FIELD, headline: HEADLINE_FIELD }] };
+    }
     throw new Error("Set AIRTABLE_TABLE, or give the Airtable token the schema.bases:read scope so the table can be found");
   }
   const wanted = process.env.AIRTABLE_TABLE;
-  const table = tables.find((t) => wanted
-    ? t.id === wanted || eq(t.name, wanted)
-    : t.fields.some((f) => eq(f.name, PROGRAM_FIELD)) && t.fields.some((f) => eq(f.name, HEADLINE_FIELD)));
-  if (!table) throw new Error(`No Airtable table with "${PROGRAM_FIELD}" and "${HEADLINE_FIELD}" columns`);
-  const program = table.fields.find((f) => eq(f.name, PROGRAM_FIELD));
-  const headline = table.fields.find((f) => eq(f.name, HEADLINE_FIELD));
-  if (!program || !headline) throw new Error(`Table "${table.name}" lacks "${PROGRAM_FIELD}" or "${HEADLINE_FIELD}"`);
-  const schema = { table: table.id, program: program.name, headline: headline.name };
-  if (program.type === "multipleRecordLinks") {
-    const linked = tables.find((t) => t.id === program.options.linkedTableId);
-    const primary = linked && linked.fields.find((f) => f.id === linked.primaryFieldId);
-    if (linked && primary) schema.link = { table: linked.id, field: primary.name };
+  const schemas = [];
+  for (const t of tables) {
+    if (wanted && t.id !== wanted && !eq(t.name, wanted)) continue;
+    const program = t.fields.find((f) => eq(f.name, PROGRAM_FIELD));
+    const headline = t.fields.find((f) => eq(f.name, HEADLINE_FIELD));
+    if (!program || !headline) continue;
+    const schema = { table: t.id, name: t.name, program: program.name, programType: program.type, headline: headline.name };
+    if (program.type === "multipleRecordLinks") {
+      const linked = tables.find((x) => x.id === program.options.linkedTableId);
+      const primary = linked && linked.fields.find((f) => f.id === linked.primaryFieldId);
+      if (linked && primary) schema.link = { table: linked.id, field: primary.name };
+    }
+    schemas.push(schema);
   }
-  return schema;
+  if (!schemas.length) throw new Error(`No Airtable table with "${PROGRAM_FIELD}" and "${HEADLINE_FIELD}" columns`);
+  return { all: tables.map((t) => ({ name: t.name, fields: t.fields.map((f) => `${f.name} (${f.type})`) })), schemas };
 }
 
+// Returns programs [{ id, name, headlines: Set }] plus stats for ?debug=mapping.
 async function loadMapping() {
   if (!process.env.AIRTABLE_TOKEN) throw new Error("AIRTABLE_TOKEN must be configured");
-  const schema = await resolveSchema();
+  const { all, schemas } = await resolveSchemas();
+  const programs = new Map();
+  const stats = [];
 
-  // Linked Program: record id -> program name from the linked table's primary field.
-  let linkNames = null;
-  if (schema.link) {
-    linkNames = new Map();
-    for (const rec of await allRecords(schema.link.table, [schema.link.field])) {
-      fieldValues(rec.fields[schema.link.field]).forEach((n) => linkNames.set(rec.id, n));
+  for (const schema of schemas) {
+    // Linked Program: record id -> program name from the linked table's primary field.
+    let linkNames = null;
+    if (schema.link) {
+      linkNames = new Map();
+      for (const rec of await allRecords(schema.link.table, [schema.link.field])) {
+        fieldValues(rec.fields[schema.link.field]).forEach((n) => linkNames.set(rec.id, n));
+      }
     }
-  }
-
-  const programs = new Map(); // id -> { id, name, headlines: Set }
-  {
+    const st = { table: schema.name, program: `${schema.program} (${schema.programType || "?"})`, headline: schema.headline, records: 0, noProgram: 0, noHeadline: 0, programs: {} };
     for (const rec of await allRecords(schema.table, [schema.program, schema.headline])) {
+      st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
-      const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v);
-      for (const name of names.map((s) => s.trim()).filter(Boolean)) {
+      const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v)
+        .map((s) => s.trim()).filter(Boolean);
+      if (!headlines.length) st.noHeadline++;
+      if (!names.length) st.noProgram++;
+      for (const name of names) {
         const id = slug(name);
         if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set() });
         headlines.forEach((h) => programs.get(id).headlines.add(h));
+        st.programs[name] = (st.programs[name] || 0) + 1;
       }
     }
+    stats.push(st);
   }
 
-  return [...programs.values()].filter((p) => p.headlines.size > 0);
+  return { programs: [...programs.values()].filter((p) => p.headlines.size > 0), stats, tables: all };
 }
 
 // ---------- Amplitude ----------
@@ -184,6 +197,23 @@ async function pool(tasks, limit) {
 // ---------- handler ----------
 
 export default async function handler(req, res) {
+  // Diagnostics: which Airtable tables/columns were used and what programs they yield.
+  if (req.query.debug === "mapping") {
+    try {
+      const { programs, stats, tables } = await loadMapping();
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({
+        base: AIRTABLE_BASE,
+        used: stats,
+        programs: programs.map((p) => ({ id: p.id, name: p.name, headlines: p.headlines.size, sample: [...p.headlines].slice(0, 5) })),
+        allTables: tables,
+      });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
   const period = String(req.query.period || "week");
   const date = parseDate(String(req.query.date || ""));
   if (!PERIOD_DAYS[period] || !date) {
@@ -193,7 +223,7 @@ export default async function handler(req, res) {
 
   try {
     const auth = amplitudeAuth();
-    const programs = await loadMapping();
+    const { programs } = await loadMapping();
     const days = PERIOD_DAYS[period];
     const range = rangeEndingAt(period, date);
 
