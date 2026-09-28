@@ -12,12 +12,13 @@
 // program, within the date range. A user counts once per program, and counts for
 // every program they touched.
 //
-// Env: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, AIRTABLE_TOKEN, AIRTABLE_TABLE
-// Optional: AIRTABLE_BASE, AIRTABLE_PROGRAM_FIELD, AIRTABLE_HEADLINE_FIELD, AMPLITUDE_HOST
+// Env: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, AIRTABLE_TOKEN
+// Optional: AIRTABLE_TABLE (otherwise found in the base by its headline/Program columns),
+//           AIRTABLE_BASE, AIRTABLE_PROGRAM_FIELD, AIRTABLE_HEADLINE_FIELD, AMPLITUDE_HOST
 
-const AIRTABLE_BASE = process.env.AIRTABLE_BASE || "app1k5mFTR9tmsZmO";
+const AIRTABLE_BASE = process.env.AIRTABLE_BASE || "app1k5mFTR9tmsZmO"; // (PROD) The Coach Programs
 const PROGRAM_FIELD = process.env.AIRTABLE_PROGRAM_FIELD || "Program";
-const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "Headline";
+const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "headline";
 const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
 
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
@@ -60,32 +61,82 @@ function fieldValues(v) {
   return [String(v)];
 }
 
-async function loadMapping() {
-  const token = process.env.AIRTABLE_TOKEN;
-  const table = process.env.AIRTABLE_TABLE;
-  if (!token || !table) throw new Error("AIRTABLE_TOKEN and AIRTABLE_TABLE must be configured");
+async function airtable(path, params = []) {
+  const url = new URL(`https://api.airtable.com/v0/${path}`);
+  for (const [k, v] of params) url.searchParams.append(k, v);
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` } });
+  if (!r.ok) throw new Error(`Airtable request failed (${r.status}) for ${url.pathname}`);
+  return r.json();
+}
 
-  const programs = new Map(); // id -> { id, name, headlines: Set }
+async function allRecords(table, fields) {
+  const out = [];
   let offset;
   do {
-    const url = new URL(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(table)}`);
-    url.searchParams.append("fields[]", PROGRAM_FIELD);
-    url.searchParams.append("fields[]", HEADLINE_FIELD);
-    url.searchParams.set("pageSize", "100");
-    if (offset) url.searchParams.set("offset", offset);
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!r.ok) throw new Error(`Airtable request failed (${r.status})`);
-    const data = await r.json();
-    for (const rec of data.records || []) {
-      const headlines = fieldValues(rec.fields[HEADLINE_FIELD]).map((s) => s.trim()).filter(Boolean);
-      for (const name of fieldValues(rec.fields[PROGRAM_FIELD]).map((s) => s.trim()).filter(Boolean)) {
+    const params = [...fields.map((f) => ["fields[]", f]), ["pageSize", "100"]];
+    if (offset) params.push(["offset", offset]);
+    const data = await airtable(`${AIRTABLE_BASE}/${encodeURIComponent(table)}`, params);
+    out.push(...(data.records || []));
+    offset = data.offset;
+  } while (offset);
+  return out;
+}
+
+const eq = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+// Finds the lessons table and the exact field names via the Meta API (needs the
+// schema.bases:read scope). If Program is a link to another table, also returns how
+// to turn linked record ids into program names.
+async function resolveSchema() {
+  let tables;
+  try {
+    tables = (await airtable(`meta/bases/${AIRTABLE_BASE}/tables`)).tables || [];
+  } catch (e) {
+    if (process.env.AIRTABLE_TABLE) return { table: process.env.AIRTABLE_TABLE, program: PROGRAM_FIELD, headline: HEADLINE_FIELD };
+    throw new Error("Set AIRTABLE_TABLE, or give the Airtable token the schema.bases:read scope so the table can be found");
+  }
+  const wanted = process.env.AIRTABLE_TABLE;
+  const table = tables.find((t) => wanted
+    ? t.id === wanted || eq(t.name, wanted)
+    : t.fields.some((f) => eq(f.name, PROGRAM_FIELD)) && t.fields.some((f) => eq(f.name, HEADLINE_FIELD)));
+  if (!table) throw new Error(`No Airtable table with "${PROGRAM_FIELD}" and "${HEADLINE_FIELD}" columns`);
+  const program = table.fields.find((f) => eq(f.name, PROGRAM_FIELD));
+  const headline = table.fields.find((f) => eq(f.name, HEADLINE_FIELD));
+  if (!program || !headline) throw new Error(`Table "${table.name}" lacks "${PROGRAM_FIELD}" or "${HEADLINE_FIELD}"`);
+  const schema = { table: table.id, program: program.name, headline: headline.name };
+  if (program.type === "multipleRecordLinks") {
+    const linked = tables.find((t) => t.id === program.options.linkedTableId);
+    const primary = linked && linked.fields.find((f) => f.id === linked.primaryFieldId);
+    if (linked && primary) schema.link = { table: linked.id, field: primary.name };
+  }
+  return schema;
+}
+
+async function loadMapping() {
+  if (!process.env.AIRTABLE_TOKEN) throw new Error("AIRTABLE_TOKEN must be configured");
+  const schema = await resolveSchema();
+
+  // Linked Program: record id -> program name from the linked table's primary field.
+  let linkNames = null;
+  if (schema.link) {
+    linkNames = new Map();
+    for (const rec of await allRecords(schema.link.table, [schema.link.field])) {
+      fieldValues(rec.fields[schema.link.field]).forEach((n) => linkNames.set(rec.id, n));
+    }
+  }
+
+  const programs = new Map(); // id -> { id, name, headlines: Set }
+  {
+    for (const rec of await allRecords(schema.table, [schema.program, schema.headline])) {
+      const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
+      const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v);
+      for (const name of names.map((s) => s.trim()).filter(Boolean)) {
         const id = slug(name);
         if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set() });
         headlines.forEach((h) => programs.get(id).headlines.add(h));
       }
     }
-    offset = data.offset;
-  } while (offset);
+  }
 
   return [...programs.values()].filter((p) => p.headlines.size > 0);
 }
