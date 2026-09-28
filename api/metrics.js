@@ -203,17 +203,30 @@ function amplitudeAuth() {
 }
 
 // Amplitude event definitions per metric; null when the metric has no source for a program.
-const METRIC_EVENTS = {
-  totalUsers: (p) => ({
+function lessonOpen(p, extraFilters = []) {
+  return {
     event_type: "DailyPlanItemOpen",
-    filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.headlines] }],
-  }),
-  entryOrganic: (p) => ENTRY_GOALS[p.id] ? {
-    event_type: "OnboardingNativeQuestionAnswered",
-    filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],
-  } : null,
+    filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.headlines] }, ...extraFilters],
+  };
+}
+
+// "First time" filter (Amplitude's historical count = 1, within a 365-day lookback).
+const FIRST_TIME = { group_type: "User", subprop_type: "nth_time_hack", subprop_key: "nth_time_performed", subprop_op: "is", subprop_value: ["1"] };
+
+// metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
+const METRICS = {
+  totalUsers: (p) => (auth, range) => uniqueUsers(auth, lessonOpen(p), range),
+  entryOrganic: (p) => ENTRY_GOALS[p.id]
+    ? (auth, range) => uniqueUsers(auth, {
+        event_type: "OnboardingNativeQuestionAnswered",
+        filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],
+      }, range)
+    : null,
+  // Return Rate: of users whose first lesson of the program falls in the range,
+  // the share who opened a lesson of the same program again the next day.
+  returnRate: (p) => (auth, range) => dayOneReturn(auth, lessonOpen(p, [FIRST_TIME]), lessonOpen(p), range),
 };
-const LIVE_METRICS = Object.keys(METRIC_EVENTS);
+const LIVE_METRICS = Object.keys(METRICS);
 
 // Unique users over the whole range (deduplicated across days), via Event Segmentation.
 async function uniqueUsers(auth, event, range) {
@@ -230,6 +243,30 @@ async function uniqueUsers(auth, event, range) {
   return collapsed ? collapsed.value : 0;
 }
 
+// Day-1 (N-day) retention pooled over all daily cohorts in the range whose day 1
+// is already complete: Σ returned on day 1 / Σ cohort size. null when no cohort.
+async function dayOneReturn(auth, startEvent, returnEvent, range) {
+  const url = new URL(`${AMPLITUDE_HOST}/api/2/retention`);
+  url.searchParams.set("se", JSON.stringify(startEvent));
+  url.searchParams.set("re", JSON.stringify(returnEvent));
+  url.searchParams.set("i", "1");
+  url.searchParams.set("nthTimeLookbackWindow", "365");
+  url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+  url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+  const r = await fetch(url, { headers: { Authorization: auth } });
+  if (!r.ok) throw new Error(`Amplitude retention request failed (${r.status})`);
+  const data = (await r.json()).data || {};
+  const series = (data.series && data.series[0]) || {};
+  let returned = 0, cohort = 0;
+  for (const days of Object.values(series.values || {})) {
+    const d1 = days && days[1];
+    if (!d1 || d1.incomplete) continue;
+    returned += d1.count;
+    cohort += d1.outof;
+  }
+  return cohort ? returned / cohort : null;
+}
+
 async function pool(tasks, limit) {
   const out = new Array(tasks.length);
   let next = 0;
@@ -244,6 +281,9 @@ async function pool(tasks, limit) {
 }
 
 // ---------- handler ----------
+
+// Many Amplitude queries per request (programs × metrics × 2 periods).
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   // Diagnostics: which Airtable tables/columns were used and what programs they yield.
@@ -264,6 +304,28 @@ export default async function handler(req, res) {
         shared,
         allTables: mapping.tables,
       });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
+  // Diagnostics: raw Amplitude retention response for one program (verifies the API contract).
+  if (req.query.debug === "retention") {
+    try {
+      const { programs } = selectPrograms((await loadMapping()).programs);
+      const p = programs.find((x) => x.id === String(req.query.program || "last-longer"));
+      const range = { from: parseDate(String(req.query.from)), to: parseDate(String(req.query.to)) };
+      const url = new URL(`${AMPLITUDE_HOST}/api/2/retention`);
+      url.searchParams.set("se", JSON.stringify(lessonOpen(p, req.query.nth === "0" ? [] : [FIRST_TIME])));
+      url.searchParams.set("re", JSON.stringify(lessonOpen(p)));
+      url.searchParams.set("i", "1");
+      url.searchParams.set("nthTimeLookbackWindow", "365");
+      url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+      url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+      const r = await fetch(url, { headers: { Authorization: amplitudeAuth() } });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(r.status).send(await r.text());
     } catch (e) {
       res.status(502).json({ error: e.message });
     }
@@ -296,14 +358,14 @@ export default async function handler(req, res) {
       const p = programs.find((x) => x.id === String(req.query.history));
       if (!p) { res.status(404).json({ error: "unknown program" }); return; }
       const metric = String(req.query.metric || "totalUsers");
-      const event = METRIC_EVENTS[metric] && METRIC_EVENTS[metric](p);
-      if (!event) { res.status(400).json({ error: `no live data for ${metric} of ${p.id}` }); return; }
+      const compute = METRICS[metric] && METRICS[metric](p);
+      if (!compute) { res.status(400).json({ error: `no live data for ${metric} of ${p.id}` }); return; }
       const points = Math.min(Math.max(parseInt(req.query.points, 10) || 11, 2), MAX_HISTORY_POINTS);
       const ranges = Array.from({ length: points }, (_, k) => {
         const shift = (points - 1 - k) * days;
         return { from: addDays(range.from, -shift), to: addDays(range.to, -shift) };
       });
-      const values = await pool(ranges.map((r) => () => uniqueUsers(auth, event, r)), AMPLITUDE_CONCURRENCY);
+      const values = await pool(ranges.map((r) => () => compute(auth, r)), AMPLITUDE_CONCURRENCY);
       res.status(200).json({
         series: ranges.map((r, k) => ({ from: iso(r.from), to: iso(r.to), value: values[k] })),
       });
@@ -316,11 +378,11 @@ export default async function handler(req, res) {
     const tasks = [];
     programs.forEach((p, i) => {
       for (const metric of LIVE_METRICS) {
-        const event = METRIC_EVENTS[metric](p);
+        const compute = METRICS[metric](p);
         rows[i].current[metric] = rows[i].previous[metric] = null;
-        if (!event) continue;
-        tasks.push(async () => { rows[i].current[metric] = await uniqueUsers(auth, event, range); });
-        tasks.push(async () => { rows[i].previous[metric] = await uniqueUsers(auth, event, prevRange); });
+        if (!compute) continue;
+        tasks.push(async () => { rows[i].current[metric] = await compute(auth, range); });
+        tasks.push(async () => { rows[i].previous[metric] = await compute(auth, prevRange); });
       }
     });
     await pool(tasks, AMPLITUDE_CONCURRENCY);
