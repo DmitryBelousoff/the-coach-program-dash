@@ -292,6 +292,10 @@ const METRICS = {
   // User Satisfaction: average 1–5 lesson rating of the program's lessons in the range
   // (CoachLessonRating: `rating` on Android, `value` on iOS), weighted by number of ratings.
   rating: (p) => p.lessonIds.size ? async (auth, range) => averageRating(await ratingsByLesson(auth, range), p) : null,
+  // Number of ratings behind the average (shown next to it).
+  ratingCount: (p) => p.lessonIds.size
+    ? async (auth, range) => { const byLesson = await ratingsByLesson(auth, range); let n = 0; for (const id of p.lessonIds) n += (byLesson.get(id) || { n: 0 }).n; return n; }
+    : null,
   // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
   shares: (p) => p.lessonIds.size
     ? async (auth, range) => sumForLessons(await totalsBy(auth, { event_type: "SharingVideoSent", filters: [] }, "lessonId", range), p)
