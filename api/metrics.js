@@ -143,8 +143,9 @@ async function loadMapping() {
       if (!names.length) st.noProgram++;
       for (const name of names) {
         const id = slug(name);
-        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set() });
+        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), tables: new Set() });
         headlines.forEach((h) => programs.get(id).headlines.add(h));
+        programs.get(id).tables.add(schema.name);
         st.programs[name] = (st.programs[name] || 0) + 1;
       }
     }
@@ -152,6 +153,33 @@ async function loadMapping() {
   }
 
   return { programs: [...programs.values()].filter((p) => p.headlines.size > 0), stats, tables: all };
+}
+
+// The Amplitude project is the men's app, so programs for women are left out
+// (matched by program code or by the name of any table they come from).
+const FEMALE = /for_?her|woman|female|menopause/i;
+
+// Which programs the dashboard shows, and with which headlines:
+//  - men's programs only;
+//  - only headlines unique to one program: a lesson shared between programs can't
+//    be attributed from DailyPlanItemOpen.title, so it counts for none of them.
+function selectPrograms(all) {
+  const excluded = [];
+  const male = all.filter((p) => {
+    const female = FEMALE.test(p.name) || [...p.tables].some((t) => FEMALE.test(t));
+    if (female) excluded.push({ name: p.name, reason: "for women" });
+    return !female;
+  });
+  const owners = new Map();
+  for (const p of male) for (const h of p.headlines) owners.set(h, (owners.get(h) || 0) + 1);
+  const shared = [...owners].filter(([, n]) => n > 1).map(([h]) => h);
+  const programs = [];
+  for (const p of male) {
+    const unique = new Set([...p.headlines].filter((h) => owners.get(h) === 1));
+    if (!unique.size) { excluded.push({ name: p.name, reason: "all headlines shared with other programs" }); continue; }
+    programs.push({ ...p, headlines: unique, sharedDropped: p.headlines.size - unique.size });
+  }
+  return { programs, excluded, shared };
 }
 
 // ---------- Amplitude ----------
@@ -200,19 +228,20 @@ export default async function handler(req, res) {
   // Diagnostics: which Airtable tables/columns were used and what programs they yield.
   if (req.query.debug === "mapping") {
     try {
-      const { programs, stats, tables } = await loadMapping();
+      const mapping = await loadMapping();
+      const { programs, excluded, shared } = selectPrograms(mapping.programs);
       res.setHeader("Cache-Control", "no-store");
       res.status(200).json({
         base: AIRTABLE_BASE,
-        used: stats,
-        programs: programs.map((p) => ({ id: p.id, name: p.name, headlines: p.headlines.size, sample: [...p.headlines].slice(0, 5) })),
-        // Headlines that belong to more than one program: their viewers count in each.
-        shared: (() => {
-          const owners = new Map();
-          for (const p of programs) for (const h of p.headlines) owners.set(h, [...(owners.get(h) || []), p.name]);
-          return [...owners].filter(([, o]) => o.length > 1).map(([headline, programs]) => ({ headline, programs }));
-        })(),
-        allTables: tables,
+        used: mapping.stats,
+        programs: programs.map((p) => ({
+          id: p.id, name: p.name, tables: [...p.tables],
+          headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
+        })),
+        excluded,
+        // Headlines in more than one men's program; not counted for any of them.
+        shared,
+        allTables: mapping.tables,
       });
     } catch (e) {
       res.status(502).json({ error: e.message });
@@ -229,7 +258,7 @@ export default async function handler(req, res) {
 
   try {
     const auth = amplitudeAuth();
-    const { programs } = await loadMapping();
+    const { programs } = selectPrograms((await loadMapping()).programs);
     const days = PERIOD_DAYS[period];
     const range = rangeEndingAt(period, date);
 
@@ -268,12 +297,13 @@ export default async function handler(req, res) {
       prevRange: { from: iso(prevRange.from), to: iso(prevRange.to) },
       source: "amplitude",
       metrics: ["totalUsers"],
+      // Programs with no activity in either period are hidden.
       programs: programs.map((p, i) => ({
         id: p.id,
         name: p.name,
         current: { totalUsers: values[2 * i] },
         previous: { totalUsers: values[2 * i + 1] },
-      })),
+      })).filter((p) => p.current.totalUsers > 0 || p.previous.totalUsers > 0),
     });
   } catch (e) {
     console.error(e);
