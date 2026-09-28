@@ -36,7 +36,9 @@ const ENTRY_GOALS = {
   "overall-health": "BOOST OVERALL HEALTH",
 };
 const MAX_HISTORY_POINTS = 13;
-const AMPLITUDE_CONCURRENCY = 4; // Amplitude allows 5 concurrent Dashboard API requests
+const AMPLITUDE_CONCURRENCY = 5; // Amplitude allows 5 concurrent Dashboard API requests
+const AIRTABLE_CONCURRENCY = 4;  // Airtable allows 5 requests/s per base
+const MAPPING_TTL_MS = 10 * 60 * 1000;
 
 // ---------- dates ----------
 
@@ -132,13 +134,25 @@ async function resolveSchemas() {
 }
 
 // Returns programs [{ id, name, headlines: Set }] plus stats for ?debug=mapping.
-async function loadMapping() {
+// The mapping changes rarely; a warm function instance reuses it for a while.
+let mappingCache = null; // { at, value: Promise }
+
+function loadMapping() {
+  if (mappingCache && Date.now() - mappingCache.at < MAPPING_TTL_MS) return mappingCache.value;
+  const value = fetchMapping();
+  mappingCache = { at: Date.now(), value };
+  value.catch(() => { mappingCache = null; });
+  return value;
+}
+
+async function fetchMapping() {
   if (!process.env.AIRTABLE_TOKEN) throw new Error("AIRTABLE_TOKEN must be configured");
   const { all, schemas } = await resolveSchemas();
   const programs = new Map();
   const stats = [];
 
-  for (const schema of schemas) {
+  // Fetch all tables in parallel (bounded), then process them in a stable order.
+  const loaded = await pool(schemas.map((schema) => async () => {
     // Linked Program: record id -> program name from the linked table's primary field.
     let linkNames = null;
     if (schema.link) {
@@ -147,9 +161,13 @@ async function loadMapping() {
         fieldValues(rec.fields[schema.link.field]).forEach((n) => linkNames.set(rec.id, n));
       }
     }
-    const st = { table: schema.name, program: `${schema.program} (${schema.programType || "?"})`, headline: schema.headline, records: 0, noProgram: 0, noHeadline: 0, programs: {} };
     const fields = [schema.program, schema.headline, ...(schema.lessonId ? [schema.lessonId] : [])];
-    for (const rec of await allRecords(schema.table, fields)) {
+    return { schema, linkNames, records: await allRecords(schema.table, fields) };
+  }), AIRTABLE_CONCURRENCY);
+
+  for (const { schema, linkNames, records } of loaded) {
+    const st = { table: schema.name, program: `${schema.program} (${schema.programType || "?"})`, headline: schema.headline, records: 0, noProgram: 0, noHeadline: 0, programs: {} };
+    for (const rec of records) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
       // Amplitude's lesson_id is usually the Airtable id without its type prefix
@@ -213,6 +231,23 @@ function selectPrograms(all) {
 
 // ---------- Amplitude ----------
 
+// Global limiter: Amplitude allows only a few concurrent Dashboard API queries per
+// project, however the calls are nested (programs × metrics × periods, shared ratings).
+let amplitudeActive = 0;
+const amplitudeQueue = [];
+
+async function amplitudeFetch(url, auth) {
+  if (amplitudeActive >= AMPLITUDE_CONCURRENCY) await new Promise((resolve) => amplitudeQueue.push(resolve));
+  amplitudeActive++;
+  try {
+    return await fetch(url, { headers: { Authorization: auth } });
+  } finally {
+    amplitudeActive--;
+    const next = amplitudeQueue.shift();
+    if (next) next();
+  }
+}
+
 function amplitudeAuth() {
   const key = process.env.AMPLITUDE_API_KEY, secret = process.env.AMPLITUDE_SECRET_KEY;
   if (!key || !secret) throw new Error("AMPLITUDE_API_KEY and AMPLITUDE_SECRET_KEY must be configured");
@@ -244,7 +279,7 @@ const METRICS = {
   returnRate: (p) => (auth, range) => dayOneReturn(auth, lessonOpen(p, [FIRST_TIME]), lessonOpen(p), range),
   // User Satisfaction: average 1–5 lesson rating of the program's lessons in the range
   // (CoachLessonRating: `rating` on Android, `value` on iOS), weighted by number of ratings.
-  rating: (p) => p.lessonIds.size ? (auth, range) => averageRating(auth, p, range) : null,
+  rating: (p) => p.lessonIds.size ? async (auth, range) => averageRating(await ratingsByLesson(auth, range), p) : null,
 };
 const LIVE_METRICS = Object.keys(METRICS);
 
@@ -255,7 +290,7 @@ async function uniqueUsers(auth, event, range) {
   url.searchParams.set("m", "uniques");
   url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
   url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
-  const r = await fetch(url, { headers: { Authorization: auth } });
+  const r = await amplitudeFetch(url, auth);
   if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
   const data = (await r.json()).data || {};
   // seriesCollapsed holds the de-duplicated total for the whole range.
@@ -265,35 +300,58 @@ async function uniqueUsers(auth, event, range) {
 
 // Counts CoachLessonRating events per score (1–5) for the program's lessons, from both
 // the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
-// Rating counts are additive, so long id lists are split to keep URLs under the limit.
-const RATING_ID_CHUNK = 80;
+// Rating counts per lesson for a range, shared by all programs: one query per score
+// and platform property (5 × 2), each grouped by lesson_id.
+// -> Map lesson_id -> { sum, n }
+const ratingsMemo = new Map(); // range key -> { at, value: Promise }
 
-async function averageRating(auth, p, range) {
+function ratingsByLesson(auth, range) {
+  const key = iso(range.from) + ".." + iso(range.to);
+  const hit = ratingsMemo.get(key);
+  if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
+  const value = (async () => {
+    const byLesson = new Map();
+    const tasks = [];
+    for (const prop of ["rating", "value"]) for (let score = 1; score <= 5; score++) {
+      tasks.push(async () => {
+        const event = {
+          event_type: "CoachLessonRating",
+          filters: [{ subprop_type: "event", subprop_key: prop, subprop_op: "is", subprop_value: [String(score)] }],
+          group_by: [{ type: "event", value: "lesson_id" }],
+        };
+        const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+        url.searchParams.set("e", JSON.stringify(event));
+        url.searchParams.set("m", "totals");
+        url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+        url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+        url.searchParams.set("limit", "1000");
+        const r = await amplitudeFetch(url, auth);
+        if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+        const data = (await r.json()).data || {};
+        (data.seriesLabels || []).forEach((label, i) => {
+          const lesson = String(Array.isArray(label) ? label[label.length - 1] : label);
+          const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
+          const count = cell ? cell.value : 0;
+          const acc = byLesson.get(lesson) || { sum: 0, n: 0 };
+          acc.sum += score * count; acc.n += count;
+          byLesson.set(lesson, acc);
+        });
+      });
+    }
+    await Promise.all(tasks.map((t) => t()));
+    return byLesson;
+  })();
+  ratingsMemo.set(key, { at: Date.now(), value });
+  value.catch(() => ratingsMemo.delete(key));
+  return value;
+}
+
+// Weighted mean over the program's lessons; null when nobody rated them.
+function averageRating(byLesson, p) {
   let sum = 0, n = 0;
-  const ids = [...p.lessonIds];
-  const chunks = [];
-  for (let i = 0; i < ids.length; i += RATING_ID_CHUNK) chunks.push(ids.slice(i, i + RATING_ID_CHUNK));
-  for (const prop of ["rating", "value"]) for (const chunk of chunks) {
-    const event = {
-      event_type: "CoachLessonRating",
-      filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: chunk }],
-      group_by: [{ type: "event", value: prop }],
-    };
-    const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
-    url.searchParams.set("e", JSON.stringify(event));
-    url.searchParams.set("m", "totals");
-    url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
-    url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
-    url.searchParams.set("limit", "20");
-    const r = await fetch(url, { headers: { Authorization: auth } });
-    if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
-    const data = (await r.json()).data || {};
-    (data.seriesLabels || []).forEach((label, i) => {
-      // Labels look like [0, "5"] or "5"; "(none)" = the other platform's property.
-      const score = Number(Array.isArray(label) ? label[label.length - 1] : label);
-      const count = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0] ? data.seriesCollapsed[i][0].value : 0;
-      if (Number.isInteger(score) && score >= 1 && score <= 5) { sum += score * count; n += count; }
-    });
+  for (const id of p.lessonIds) {
+    const acc = byLesson.get(id);
+    if (acc) { sum += acc.sum; n += acc.n; }
   }
   return n ? sum / n : null;
 }
@@ -308,7 +366,7 @@ async function dayOneReturn(auth, startEvent, returnEvent, range) {
   url.searchParams.set("nthTimeLookbackWindow", "365");
   url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
   url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
-  const r = await fetch(url, { headers: { Authorization: auth } });
+  const r = await amplitudeFetch(url, auth);
   if (!r.ok) throw new Error(`Amplitude retention request failed (${r.status})`);
   const data = (await r.json()).data || {};
   const series = (data.series && data.series[0]) || {};
