@@ -442,6 +442,21 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Diagnostics: which programs (before and after the shared-value rule) own a lesson id or headline.
+  if (req.query.debug === "lookup") {
+    try {
+      const mapping = await loadMapping();
+      const { programs } = selectPrograms(mapping.programs);
+      const q = String(req.query.q || "");
+      const owners = (list) => list.filter((p) => p.lessonIds.has(q) || p.headlines.has(q)).map((p) => p.name);
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ q, allPrograms: owners(mapping.programs), afterRules: owners(programs) });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
   // Diagnostics: raw Amplitude segmentation for one program's ratings, grouped by `prop`.
   if (req.query.debug === "rating") {
     try {
