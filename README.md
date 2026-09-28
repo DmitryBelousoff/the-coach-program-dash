@@ -23,7 +23,7 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | Return Rate | Из пользователей, у которых первое открытие урока программы (`DailyPlanItemOpen` с `title` из программы и historical count = 1, окно 365 дней) пришлось на период, — доля открывших урок той же программы на следующий день (N-day, день 1). Когорты по дням, учитываются только те, у кого день 1 уже завершён. |
 
-| User Satisfaction | Средняя оценка 1–5 из `CoachLessonRating` (`rating` на Android, `value` на iOS) по урокам программы за период, взвешенная по числу оценок. Урок → программа: `lesson_id` = колонка `id` в Airtable. Сентимент отзывов пока не считается. |
+| User Satisfaction | Средняя оценка 1–5 из `CoachLessonRating` (`rating` на Android, `value` на iOS) по урокам программы за период, взвешенная по числу оценок. Урок → программа: `lesson_id` ↔ колонка `id` в Airtable; обе стороны сравниваются без префикса `lesson_`/`exercise_` и без вставки `_video` у видеоуроков (`lessonKey` в `api/metrics.js`). Сентимент отзывов пока не считается. |
 
 | Sharing | Сколько раз делились уроками программы за период: число событий `SharingVideoSent`, урок → программа по `lessonId` так же, как для оценок. |
 
