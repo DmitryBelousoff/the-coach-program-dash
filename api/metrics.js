@@ -280,6 +280,10 @@ const METRICS = {
   // User Satisfaction: average 1–5 lesson rating of the program's lessons in the range
   // (CoachLessonRating: `rating` on Android, `value` on iOS), weighted by number of ratings.
   rating: (p) => p.lessonIds.size ? async (auth, range) => averageRating(await ratingsByLesson(auth, range), p) : null,
+  // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
+  shares: (p) => p.lessonIds.size
+    ? async (auth, range) => sumForLessons(await totalsBy(auth, { event_type: "SharingVideoSent", filters: [] }, "lessonId", range), p)
+    : null,
 };
 const LIVE_METRICS = Object.keys(METRICS);
 
@@ -300,50 +304,63 @@ async function uniqueUsers(auth, event, range) {
 
 // Counts CoachLessonRating events per score (1–5) for the program's lessons, from both
 // the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
-// Rating counts per lesson for a range, shared by all programs: one query per score
-// and platform property (5 × 2), each grouped by lesson_id.
-// -> Map lesson_id -> { sum, n }
-const ratingsMemo = new Map(); // range key -> { at, value: Promise }
+// Event totals for a range grouped by one event property, memoized per query:
+// the same result serves every program. -> Map property value -> count
+const totalsMemo = new Map(); // key -> { at, value: Promise }
 
-function ratingsByLesson(auth, range) {
-  const key = iso(range.from) + ".." + iso(range.to);
-  const hit = ratingsMemo.get(key);
+function totalsBy(auth, event, groupProp, range) {
+  const key = JSON.stringify([event, groupProp, iso(range.from), iso(range.to)]);
+  const hit = totalsMemo.get(key);
   if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
   const value = (async () => {
-    const byLesson = new Map();
-    const tasks = [];
-    for (const prop of ["rating", "value"]) for (let score = 1; score <= 5; score++) {
-      tasks.push(async () => {
-        const event = {
-          event_type: "CoachLessonRating",
-          filters: [{ subprop_type: "event", subprop_key: prop, subprop_op: "is", subprop_value: [String(score)] }],
-          group_by: [{ type: "event", value: "lesson_id" }],
-        };
-        const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
-        url.searchParams.set("e", JSON.stringify(event));
-        url.searchParams.set("m", "totals");
-        url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
-        url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
-        url.searchParams.set("limit", "1000");
-        const r = await amplitudeFetch(url, auth);
-        if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
-        const data = (await r.json()).data || {};
-        (data.seriesLabels || []).forEach((label, i) => {
-          const lesson = String(Array.isArray(label) ? label[label.length - 1] : label);
-          const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
-          const count = cell ? cell.value : 0;
-          const acc = byLesson.get(lesson) || { sum: 0, n: 0 };
-          acc.sum += score * count; acc.n += count;
-          byLesson.set(lesson, acc);
-        });
-      });
-    }
-    await Promise.all(tasks.map((t) => t()));
-    return byLesson;
+    const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+    url.searchParams.set("e", JSON.stringify({ ...event, group_by: [{ type: "event", value: groupProp }] }));
+    url.searchParams.set("m", "totals");
+    url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+    url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+    url.searchParams.set("limit", "1000");
+    const r = await amplitudeFetch(url, auth);
+    if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+    const data = (await r.json()).data || {};
+    const out = new Map();
+    (data.seriesLabels || []).forEach((label, i) => {
+      const v = String(Array.isArray(label) ? label[label.length - 1] : label);
+      const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
+      out.set(v, (out.get(v) || 0) + (cell ? cell.value : 0));
+    });
+    return out;
   })();
-  ratingsMemo.set(key, { at: Date.now(), value });
-  value.catch(() => ratingsMemo.delete(key));
+  totalsMemo.set(key, { at: Date.now(), value });
+  value.catch(() => totalsMemo.delete(key));
   return value;
+}
+
+// Rating counts per lesson: one query per score and platform property (5 × 2),
+// grouped by lesson_id. -> Map lesson_id -> { sum, n }
+async function ratingsByLesson(auth, range) {
+  const byLesson = new Map();
+  const tasks = [];
+  for (const prop of ["rating", "value"]) for (let score = 1; score <= 5; score++) {
+    tasks.push(totalsBy(auth, {
+      event_type: "CoachLessonRating",
+      filters: [{ subprop_type: "event", subprop_key: prop, subprop_op: "is", subprop_value: [String(score)] }],
+    }, "lesson_id", range).then((counts) => {
+      for (const [lesson, count] of counts) {
+        const acc = byLesson.get(lesson) || { sum: 0, n: 0 };
+        acc.sum += score * count; acc.n += count;
+        byLesson.set(lesson, acc);
+      }
+    }));
+  }
+  await Promise.all(tasks);
+  return byLesson;
+}
+
+// Sum of per-lesson counts over the program's lessons.
+function sumForLessons(counts, p) {
+  let n = 0;
+  for (const id of p.lessonIds) n += counts.get(id) || 0;
+  return n;
 }
 
 // Weighted mean over the program's lessons; null when nobody rated them.

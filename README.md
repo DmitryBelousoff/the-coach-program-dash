@@ -25,6 +25,8 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | User Satisfaction | Средняя оценка 1–5 из `CoachLessonRating` (`rating` на Android, `value` на iOS) по урокам программы за период, взвешенная по числу оценок. Урок → программа: `lesson_id` = колонка `id` в Airtable. Сентимент отзывов пока не считается. |
 
+| Sharing | Сколько раз делились уроками программы за период: число событий `SharingVideoSent`, урок → программа по `lessonId` так же, как для оценок. |
+
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.

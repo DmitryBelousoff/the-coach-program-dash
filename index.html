@@ -454,7 +454,7 @@
       `<th class="sticky" data-sort="__score"${aria("__score")}>
         <span class="m-title">Программа <span class="sort-ind">${ind("__score")}</span></span>
       </th>` +
-      COLUMNS.map((col) => `
+      orderedColumns().map((col) => `
         <th class="metric" data-sort="${col.key}"${aria(col.key)}>
           <span class="m-title">${col.title} <span class="sort-ind">${ind(col.key)}</span></span>
           <span class="m-desc">${col.desc}</span>
@@ -478,7 +478,7 @@
 
   function renderBody() {
     el.body.innerHTML = sortedPrograms().map((p) => {
-      const cells = COLUMNS.map((col) => {
+      const cells = orderedColumns().map((col) => {
         const v = p.current[col.key];
         if (v == null) return `<td><span class="empty">—</span></td>`;
         const f = col.fmt(v, p.current);
@@ -498,11 +498,18 @@
     }).join("");
   }
 
+  // Live metrics first (in their usual order), metrics without data yet on the right.
+  function orderedColumns() {
+    const live = (state.data && state.data.liveMetrics) || [];
+    if (!live.length) return COLUMNS;
+    return [...COLUMNS.filter((c) => live.includes(c.key)), ...COLUMNS.filter((c) => !live.includes(c.key))];
+  }
+
   function renderBadge(data) {
     el.badge.hidden = false;
     el.badge.classList.toggle("live", data.source === "amplitude");
     if (data.source === "amplitude") {
-      const names = data.liveMetrics.map((k) => (COLUMNS.find((c) => c.key === k) || { title: k }).title);
+      const names = orderedColumns().filter((c) => data.liveMetrics.includes(c.key)).map((c) => c.title);
       el.badge.textContent = "Amplitude: " + names.join(", ");
       el.badge.title = "Остальные метрики ещё не подключены";
     } else {
