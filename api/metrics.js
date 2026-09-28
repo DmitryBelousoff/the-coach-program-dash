@@ -278,6 +278,14 @@ const METRICS = {
         filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],
       }, range)
     : null,
+  // Pull Ratio: Total Users ÷ Entry Users — how many people the program reaches per
+  // user who picked its goal in onboarding. Higher = more interesting beyond its own entrants.
+  pullRatio: (p) => ENTRY_GOALS[p.id]
+    ? async (auth, range) => {
+        const [total, entry] = await Promise.all([METRICS.totalUsers(p)(auth, range), METRICS.entryUsers(p)(auth, range)]);
+        return entry ? total / entry : null;
+      }
+    : null,
   // Return Rate: of users whose first lesson of the program falls in the range,
   // the share who opened a lesson of the same program again the next day.
   returnRate: (p) => (auth, range) => dayOneReturn(auth, lessonOpen(p, [FIRST_TIME]), lessonOpen(p), range),
@@ -292,7 +300,20 @@ const METRICS = {
 const LIVE_METRICS = Object.keys(METRICS);
 
 // Unique users over the whole range (deduplicated across days), via Event Segmentation.
-async function uniqueUsers(auth, event, range) {
+// Memoized: derived metrics (Pull Ratio) reuse the same queries as their inputs.
+const uniquesMemo = new Map(); // key -> { at, value: Promise }
+
+function uniqueUsers(auth, event, range) {
+  const key = JSON.stringify([event, iso(range.from), iso(range.to)]);
+  const hit = uniquesMemo.get(key);
+  if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
+  const value = fetchUniqueUsers(auth, event, range);
+  uniquesMemo.set(key, { at: Date.now(), value });
+  value.catch(() => uniquesMemo.delete(key));
+  return value;
+}
+
+async function fetchUniqueUsers(auth, event, range) {
   const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
   url.searchParams.set("e", JSON.stringify(event));
   url.searchParams.set("m", "uniques");
