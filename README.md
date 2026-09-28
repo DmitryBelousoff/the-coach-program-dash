@@ -7,7 +7,27 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 Статический сайт без сборки, деплоится на Vercel как есть.
 
 - `index.html` — интерфейс
-- `data.js` — слой данных. Сейчас генерирует демо-данные; следующим шагом
-  будет заменён на запрос к серверному эндпоинту с данными из Amplitude.
+- `data.js` — слой данных: берёт живые метрики из `/api/metrics`, а если эндпоинт
+  недоступен (локальный запуск, не заданы ключи) или страница открыта с `?demo` —
+  показывает демо-данные
+- `api/metrics.js` — серверная функция Vercel: читает соответствие Headline → Program
+  из Airtable и считает метрики через Amplitude Dashboard REST API
+
+## Живые метрики
+
+| Метрика | Как считается |
+|---|---|
+| Total Users | Уникальные пользователи с ≥1 `DailyPlanItemOpen`, у которого `title` — один из Headline программы в Airtable, за выбранный период. Пользователь считается один раз на программу и попадает во все программы, контент которых открывал. |
+
+Остальные метрики пока демо и в живом режиме показываются как «—».
+
+## Переменные окружения (Vercel → Settings → Environment Variables)
+
+| Переменная | Что это |
+|---|---|
+| `AMPLITUDE_API_KEY`, `AMPLITUDE_SECRET_KEY` | ключи проекта «The Coach: for men only» (Amplitude → Settings → Projects) |
+| `AIRTABLE_TOKEN` | personal access token Airtable с правом `data.records:read` на базу `app1k5mFTR9tmsZmO` |
+| `AIRTABLE_TABLE` | название или id таблицы с уроками |
+| `AIRTABLE_PROGRAM_FIELD`, `AIRTABLE_HEADLINE_FIELD` | названия колонок, если не `Program` и `Headline` |
 
 Локальный запуск: `python3 -m http.server` и открыть http://localhost:8000

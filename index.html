@@ -84,6 +84,8 @@
     font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em;
     padding:3px 8px; border-radius:999px; background:var(--gold-dim); color:var(--gold-strong);
   }
+  .badge.live{background:var(--up-dim); color:var(--up);}
+  .badge.live::before{content:"● "; font-size:9px;}
 
   .controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
   .segmented{
@@ -327,7 +329,7 @@
 
   // key: field on Metrics; value(m) may combine fields; lowerIsBetter flips delta colour.
   const COLUMNS = [
-    { key: "totalUsers", title: "Total Users", desc: "Уникальные пользователи, проходящие программу сейчас", fmt: plain },
+    { key: "totalUsers", title: "Total Users", desc: "Уникальные пользователи, открывавшие контент программы за период", fmt: plain },
     { key: "entryOrganic", title: "Entry Users · Organic", desc: "Начали путь в приложении с этой программы (органика)", fmt: plain },
     { key: "entryWeb", title: "Entry Users · Web", desc: "Начали путь в приложении с этой программы (веб)", fmt: plain },
     { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
@@ -492,12 +494,25 @@
     }).join("");
   }
 
+  function renderBadge(data) {
+    el.badge.hidden = false;
+    el.badge.classList.toggle("live", data.source === "amplitude");
+    if (data.source === "amplitude") {
+      const names = data.liveMetrics.map((k) => (COLUMNS.find((c) => c.key === k) || { title: k }).title);
+      el.badge.textContent = "Amplitude: " + names.join(", ");
+      el.badge.title = "Остальные метрики ещё не подключены";
+    } else {
+      el.badge.textContent = "Демо-данные";
+      el.badge.title = data.error ? "Живые данные недоступны: " + data.error : "";
+    }
+  }
+
   async function load() {
     el.table.classList.add("loading");
     try {
       state.data = await window.DashboardData.load({ period: state.period, date: parseISO(state.date) });
       el.range.textContent = formatRange(state.data.range) + " · сравнение с " + formatRange(state.data.prevRange);
-      el.badge.hidden = state.data.source !== "mock";
+      renderBadge(state.data);
       renderHead();
       renderBody();
     } catch (e) {

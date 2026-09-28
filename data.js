@@ -1,14 +1,17 @@
 // Data layer for the Program Health dashboard.
 //
-// Right now everything is generated locally (deterministic mock data), so the UI
-// can be built and reviewed without an analytics backend. In the next iteration
-// `DashboardData.load()` will call a serverless endpoint (e.g. /api/metrics) that
-// queries Amplitude; the shape returned below is the contract the UI relies on.
+// load() first asks the serverless endpoint /api/metrics, which queries Amplitude.
+// Only some metrics are live so far (the response lists them in `metrics`); the rest
+// come back as null. When the endpoint is unavailable (local preview, keys not
+// configured) or the page is opened with ?demo, everything falls back to
+// deterministic mock data so the UI stays reviewable.
 //
 // load({ period, date }) -> Promise<{
 //   range:     { from: Date, to: Date },
 //   prevRange: { from: Date, to: Date },
 //   source:    "mock" | "amplitude",
+//   liveMetrics: string[],   // metrics with real data (empty for mock)
+//   error?:    string,       // why live data isn't shown, when it was expected
 //   programs:  [{ id, name, current: Metrics, previous: Metrics }]
 // }>
 //
@@ -152,7 +155,44 @@
     try { localStorage.setItem(PROGRAMS_KEY, JSON.stringify(list)); } catch (e) { /* storage unavailable */ }
   }
 
-  window.DashboardData = {
+  function localISO(d) {
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  function parseISO(s) {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  const forceDemo = /[?&]demo\b/.test(location.search);
+  let liveMetrics = []; // set by the last successful live load
+
+  async function fetchJSON(params) {
+    const r = await fetch("/api/metrics?" + new URLSearchParams(params));
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  }
+
+  async function liveLoad({ period, date }) {
+    const data = await fetchJSON({ period, date: localISO(date) });
+    liveMetrics = data.metrics || [];
+    const programs = data.programs.map((p) => ({
+      id: p.id,
+      name: p.name,
+      current: Object.assign(emptyMetrics(), p.current),
+      previous: Object.assign(emptyMetrics(), p.previous),
+    }));
+    return {
+      range: { from: parseISO(data.range.from), to: parseISO(data.range.to) },
+      prevRange: { from: parseISO(data.prevRange.from), to: parseISO(data.prevRange.to) },
+      source: "amplitude",
+      liveMetrics,
+      programs,
+    };
+  }
+
+  const mock = {
     async load({ period, date }) {
       const range = rangeFor(period, date);
       const prevRange = shift(range, PERIOD_DAYS[period]);
@@ -169,7 +209,7 @@
         programs.push({ id: p.id, name: p.name, custom: true, current: emptyMetrics(), previous: emptyMetrics() });
       }
 
-      return { range, prevRange, source: "mock", programs };
+      return { range, prevRange, source: "mock", liveMetrics: [], programs };
     },
 
     // Series of `points` consecutive periods ending with the one that contains `date`.
@@ -185,6 +225,38 @@
         out.push({ from: r.from, to: r.to, value: jitter(p.base, period, bucket - i, p.id)[metric] });
       }
       return out;
+    },
+  };
+
+  window.DashboardData = {
+    async load(args) {
+      if (!forceDemo) {
+        try {
+          const data = await liveLoad(args);
+          for (const p of readCustomPrograms()) {
+            data.programs.push({ id: p.id, name: p.name, custom: true, current: emptyMetrics(), previous: emptyMetrics() });
+          }
+          return data;
+        } catch (e) {
+          console.warn("Live metrics unavailable, showing demo data:", e.message);
+          liveMetrics = [];
+          const data = await mock.load(args);
+          data.error = e.message;
+          return data;
+        }
+      }
+      liveMetrics = [];
+      return mock.load(args);
+    },
+
+    async history(args) {
+      if (!liveMetrics.length) return mock.history(args);
+      if (!liveMetrics.includes(args.metric)) return [];
+      const data = await fetchJSON({
+        period: args.period, date: localISO(args.date),
+        history: args.programId, metric: args.metric, points: args.points,
+      });
+      return data.series.map((d) => ({ from: parseISO(d.from), to: parseISO(d.to), value: d.value }));
     },
 
     addProgram(name) {
