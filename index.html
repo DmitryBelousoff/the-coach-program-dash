@@ -347,7 +347,7 @@
 
   const state = {
     period: "week",
-    date: todayISO(),
+    date: lastCompleteISO(),
     sort: { key: null, dir: "desc" },
     data: null,
   };
@@ -365,8 +365,11 @@
     name: document.getElementById("program-name"),
   };
 
-  function todayISO() {
+  // Periods end on the last complete day, so the current and the previous period
+  // always have the same length (today is still in progress).
+  function lastCompleteISO() {
     const d = new Date();
+    d.setDate(d.getDate() - 1);
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   }
 
@@ -573,7 +576,6 @@
     const last = series.length - 1;
     const cls = trendClass(pctChange(series[last].value, series[0].value), col);
     const stroke = cls === "up" ? "var(--up)" : cls === "down" ? "var(--down)" : "var(--ink-dim)";
-    const isToday = state.date === todayISO();
 
     const grid = ticks.map((t) => `
       <line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/>
@@ -581,7 +583,7 @@
     const labelEvery = series.length > 8 || W < 520 ? (W < 520 && series.length > 8 ? 3 : 2) : 1;
     const xTicks = series.map((d, i) => {
       if (i !== last && (last - i) % labelEvery !== 0) return "";
-      const label = i === last ? (isToday ? "сейчас" : axisDate(d.to)) : axisDate(d.from);
+      const label = axisDate(d.from);
       return `<text class="tick" x="${x(i)}" y="${H - 8}" text-anchor="middle">${label}</text>`;
     }).join("");
     const solid = series.slice(0, last).map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join("");
@@ -611,7 +613,7 @@
       const d = series[i];
       const rect = svg.getBoundingClientRect(), k = rect.width / W;
       cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
-      const period = i === last && isToday ? "текущий период" : dm.format(d.from) + " – " + dm.format(d.to);
+      const period = dm.format(d.from) + " – " + dm.format(d.to);
       tip.innerHTML = `<b>${valueText(d.value, col)}</b>${period}`;
       tip.style.left = Math.min(Math.max(x(i) * k, 70), rect.width - 70) + "px";
       tip.style.top = y(d.value) * k + "px";
@@ -642,12 +644,10 @@
     trend.title.textContent = `${p.name} · ${col.title}`;
     trend.desc.textContent = col.desc;
     trend.stats.innerHTML = `
-      <div><span class="stat-label">сейчас</span><span class="stat-val now">${valueText(cur, col)}</span></div>
+      <div><span class="stat-label">за период</span><span class="stat-val now">${valueText(cur, col)}</span></div>
       <div><span class="stat-label">${words.prev}</span><span class="stat-val ${trendClass(vsPrev, col)}">${pctText(vsPrev)}</span></div>
       <div><span class="stat-label">${words.ago(n - 1)}</span><span class="stat-val ${trendClass(vsFirst, col)}">${pctText(vsFirst)}</span></div>`;
-    trend.note.textContent = state.date === todayISO()
-      ? "Пунктир — текущий, ещё не закончившийся период."
-      : "Пунктир — выбранный период.";
+    trend.note.textContent = "Пунктир — выбранный период. Периоды заканчиваются последним полным днём.";
     if (!trend.dialog.open) trend.dialog.showModal();
     trend.current = { series, col };
     drawChart(series, col);
@@ -678,7 +678,7 @@
   });
 
   el.date.value = state.date;
-  el.date.max = todayISO();
+  el.date.max = lastCompleteISO();
   el.date.addEventListener("change", () => {
     if (!el.date.value) { el.date.value = state.date; return; }
     state.date = el.date.value;

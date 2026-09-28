@@ -271,11 +271,17 @@ export default async function handler(req, res) {
   }
 
   const period = String(req.query.period || "week");
-  const date = parseDate(String(req.query.date || ""));
+  let date = parseDate(String(req.query.date || ""));
   if (!PERIOD_DAYS[period] || !date) {
     res.status(400).json({ error: "period (week|month|quarter) and date (YYYY-MM-DD) are required" });
     return;
   }
+
+  // Periods end on the last complete day (UTC, the Amplitude project's timezone):
+  // a period that includes today would be shorter than the one it's compared with.
+  const lastComplete = addDays(parseDate(iso(new Date())), -1);
+  const isLatest = date >= lastComplete;
+  if (isLatest) date = lastComplete;
 
   try {
     const auth = amplitudeAuth();
@@ -283,9 +289,8 @@ export default async function handler(req, res) {
     const days = PERIOD_DAYS[period];
     const range = rangeEndingAt(period, date);
 
-    // Past periods don't change; the current one is cached briefly.
-    const isPast = date < addDays(new Date(), -1);
-    res.setHeader("Cache-Control", isPast ? "s-maxage=86400, stale-while-revalidate=3600" : "s-maxage=900, stale-while-revalidate=300");
+    // Older periods don't change; the latest one may still receive late events.
+    res.setHeader("Cache-Control", isLatest ? "s-maxage=3600, stale-while-revalidate=600" : "s-maxage=86400, stale-while-revalidate=3600");
 
     if (req.query.history) {
       const p = programs.find((x) => x.id === String(req.query.history));
