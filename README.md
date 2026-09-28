@@ -19,6 +19,8 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 |---|---|
 | Total Users | Уникальные пользователи с ≥1 `DailyPlanItemOpen`, у которого `title` — один из Headline программы в Airtable, за выбранный период. Пользователь считается один раз на программу и попадает во все программы, контент которых открывал. |
 
+| Entry Users · Organic | Уникальные пользователи, выбравшие в нативном онбординге цель программы (`OnboardingNativeQuestionAnswered.answer`) за период: `BEAT PREMATURE EJACULATION` → last_longer, `BEAT ERECTILE DYSFUNCTION` → keep_it_hard, `IMPROVE SEX SKILLS` → sex_skill_man, `BOOST OVERALL HEALTH` → overall_health. Только английские ответы. |
+
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.

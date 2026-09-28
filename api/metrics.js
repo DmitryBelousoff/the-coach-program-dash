@@ -12,6 +12,9 @@
 // program, within the date range. A user counts once per program, and counts for
 // every program they touched.
 //
+// Entry Users · Organic = unique users who picked the program's goal in the native
+// onboarding survey (OnboardingNativeQuestionAnswered.answer) within the date range.
+//
 // Env: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, AIRTABLE_TOKEN
 // Optional: AIRTABLE_TABLE (otherwise found in the base by its headline/Program columns),
 //           AIRTABLE_BASE, AIRTABLE_PROGRAM_FIELD, AIRTABLE_HEADLINE_FIELD, AMPLITUDE_HOST
@@ -22,6 +25,15 @@ const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "headline";
 const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
 
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
+
+// Onboarding goal (answer, as tracked) -> program id (slug of the Airtable Program).
+// English answers only for now.
+const ENTRY_GOALS = {
+  "last-longer": "BEAT PREMATURE EJACULATION",
+  "keep-it-hard": "BEAT ERECTILE DYSFUNCTION",
+  "sex-skill-man": "IMPROVE SEX SKILLS",
+  "overall-health": "BOOST OVERALL HEALTH",
+};
 const MAX_HISTORY_POINTS = 13;
 const AMPLITUDE_CONCURRENCY = 4; // Amplitude allows 5 concurrent Dashboard API requests
 
@@ -190,12 +202,21 @@ function amplitudeAuth() {
   return "Basic " + Buffer.from(`${key}:${secret}`).toString("base64");
 }
 
-// Unique users over the whole range (deduplicated across days), via Event Segmentation.
-async function uniqueUsers(auth, headlines, range) {
-  const event = {
+// Amplitude event definitions per metric; null when the metric has no source for a program.
+const METRIC_EVENTS = {
+  totalUsers: (p) => ({
     event_type: "DailyPlanItemOpen",
-    filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...headlines] }],
-  };
+    filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.headlines] }],
+  }),
+  entryOrganic: (p) => ENTRY_GOALS[p.id] ? {
+    event_type: "OnboardingNativeQuestionAnswered",
+    filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],
+  } : null,
+};
+const LIVE_METRICS = Object.keys(METRIC_EVENTS);
+
+// Unique users over the whole range (deduplicated across days), via Event Segmentation.
+async function uniqueUsers(auth, event, range) {
   const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
   url.searchParams.set("e", JSON.stringify(event));
   url.searchParams.set("m", "uniques");
@@ -269,16 +290,15 @@ export default async function handler(req, res) {
     if (req.query.history) {
       const p = programs.find((x) => x.id === String(req.query.history));
       if (!p) { res.status(404).json({ error: "unknown program" }); return; }
-      if (String(req.query.metric || "totalUsers") !== "totalUsers") {
-        res.status(400).json({ error: "only totalUsers is live so far" });
-        return;
-      }
+      const metric = String(req.query.metric || "totalUsers");
+      const event = METRIC_EVENTS[metric] && METRIC_EVENTS[metric](p);
+      if (!event) { res.status(400).json({ error: `no live data for ${metric} of ${p.id}` }); return; }
       const points = Math.min(Math.max(parseInt(req.query.points, 10) || 11, 2), MAX_HISTORY_POINTS);
       const ranges = Array.from({ length: points }, (_, k) => {
         const shift = (points - 1 - k) * days;
         return { from: addDays(range.from, -shift), to: addDays(range.to, -shift) };
       });
-      const values = await pool(ranges.map((r) => () => uniqueUsers(auth, p.headlines, r)), AMPLITUDE_CONCURRENCY);
+      const values = await pool(ranges.map((r) => () => uniqueUsers(auth, event, r)), AMPLITUDE_CONCURRENCY);
       res.status(200).json({
         series: ranges.map((r, k) => ({ from: iso(r.from), to: iso(r.to), value: values[k] })),
       });
@@ -286,24 +306,27 @@ export default async function handler(req, res) {
     }
 
     const prevRange = { from: addDays(range.from, -days), to: addDays(range.to, -days) };
-    const tasks = programs.flatMap((p) => [
-      () => uniqueUsers(auth, p.headlines, range),
-      () => uniqueUsers(auth, p.headlines, prevRange),
-    ]);
-    const values = await pool(tasks, AMPLITUDE_CONCURRENCY);
+    // One task per program × metric × period; metrics without a source stay null.
+    const rows = programs.map((p) => ({ id: p.id, name: p.name, current: {}, previous: {} }));
+    const tasks = [];
+    programs.forEach((p, i) => {
+      for (const metric of LIVE_METRICS) {
+        const event = METRIC_EVENTS[metric](p);
+        rows[i].current[metric] = rows[i].previous[metric] = null;
+        if (!event) continue;
+        tasks.push(async () => { rows[i].current[metric] = await uniqueUsers(auth, event, range); });
+        tasks.push(async () => { rows[i].previous[metric] = await uniqueUsers(auth, event, prevRange); });
+      }
+    });
+    await pool(tasks, AMPLITUDE_CONCURRENCY);
 
     res.status(200).json({
       range: { from: iso(range.from), to: iso(range.to) },
       prevRange: { from: iso(prevRange.from), to: iso(prevRange.to) },
       source: "amplitude",
-      metrics: ["totalUsers"],
+      metrics: LIVE_METRICS,
       // Programs with no activity in either period are hidden.
-      programs: programs.map((p, i) => ({
-        id: p.id,
-        name: p.name,
-        current: { totalUsers: values[2 * i] },
-        previous: { totalUsers: values[2 * i + 1] },
-      })).filter((p) => p.current.totalUsers > 0 || p.previous.totalUsers > 0),
+      programs: rows.filter((r) => LIVE_METRICS.some((m) => r.current[m] > 0 || r.previous[m] > 0)),
     });
   } catch (e) {
     console.error(e);
