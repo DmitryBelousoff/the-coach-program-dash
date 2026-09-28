@@ -134,6 +134,13 @@ async function resolveSchemas() {
 }
 
 // Returns programs [{ id, name, headlines: Set }] plus stats for ?debug=mapping.
+// Lesson ids in Amplitude events differ from the Airtable `id` column: the type prefix
+// is sometimes dropped ("lesson_x" -> "x") and video lessons get "_video" inserted
+// ("lesson_x_sqrt" -> "lesson_x_video_sqrt"). Both sides are compared by this key.
+function lessonKey(id) {
+  return String(id).trim().replace(/^(lesson|exercise)_/, "").replace(/_video(?=_|$)/, "");
+}
+
 // The mapping changes rarely; a warm function instance reuses it for a while.
 let mappingCache = null; // { at, value: Promise }
 
@@ -170,11 +177,8 @@ async function fetchMapping() {
     for (const rec of records) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
-      // Amplitude's lesson_id is usually the Airtable id without its type prefix
-      // ("lesson_x" -> "x", "exercise_y" -> "y"), but not always, so keep both forms.
       const lessonIds = (schema.lessonId ? fieldValues(rec.fields[schema.lessonId]) : [])
-        .map((s) => s.trim()).filter(Boolean)
-        .flatMap((v) => [v, v.replace(/^(lesson|exercise)_/, "")]);
+        .map((s) => s.trim()).filter(Boolean).map(lessonKey);
       const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v)
         .map((s) => s.trim()).filter(Boolean);
       if (!headlines.length) st.noHeadline++;
@@ -304,8 +308,8 @@ async function uniqueUsers(auth, event, range) {
 
 // Counts CoachLessonRating events per score (1–5) for the program's lessons, from both
 // the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
-// Event totals for a range grouped by one event property, memoized per query:
-// the same result serves every program. -> Map property value -> count
+// Event totals for a range grouped by a lesson-id property, memoized per query:
+// the same result serves every program. -> Map lessonKey -> count
 const totalsMemo = new Map(); // key -> { at, value: Promise }
 
 function totalsBy(auth, event, groupProp, range) {
@@ -324,7 +328,7 @@ function totalsBy(auth, event, groupProp, range) {
     const data = (await r.json()).data || {};
     const out = new Map();
     (data.seriesLabels || []).forEach((label, i) => {
-      const v = String(Array.isArray(label) ? label[label.length - 1] : label);
+      const v = lessonKey(Array.isArray(label) ? label[label.length - 1] : label);
       const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
       out.set(v, (out.get(v) || 0) + (cell ? cell.value : 0));
     });
@@ -448,7 +452,7 @@ export default async function handler(req, res) {
       const mapping = await loadMapping();
       const { programs } = selectPrograms(mapping.programs);
       const q = String(req.query.q || "");
-      const owners = (list) => list.filter((p) => p.lessonIds.has(q) || p.headlines.has(q)).map((p) => p.name);
+      const owners = (list) => list.filter((p) => p.lessonIds.has(lessonKey(q)) || p.headlines.has(q)).map((p) => p.name);
       res.setHeader("Cache-Control", "no-store");
       res.status(200).json({ q, allPrograms: owners(mapping.programs), afterRules: owners(programs) });
     } catch (e) {
