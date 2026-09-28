@@ -12,7 +12,7 @@
 // program, within the date range. A user counts once per program, and counts for
 // every program they touched.
 //
-// Entry Users · Organic = unique users who picked the program's goal in the native
+// Entry Users = unique users who picked the program's goal in the native
 // onboarding survey (OnboardingNativeQuestionAnswered.answer) within the date range.
 //
 // Env: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, AIRTABLE_TOKEN
@@ -272,7 +272,7 @@ const FIRST_TIME = { group_type: "User", subprop_type: "nth_time_hack", subprop_
 // metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
 const METRICS = {
   totalUsers: (p) => (auth, range) => uniqueUsers(auth, lessonOpen(p), range),
-  entryOrganic: (p) => ENTRY_GOALS[p.id]
+  entryUsers: (p) => ENTRY_GOALS[p.id]
     ? (auth, range) => uniqueUsers(auth, {
         event_type: "OnboardingNativeQuestionAnswered",
         filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],

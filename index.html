@@ -330,8 +330,7 @@
   // key: field on Metrics; value(m) may combine fields; lowerIsBetter flips delta colour.
   const COLUMNS = [
     { key: "totalUsers", title: "Total Users", desc: "Уникальные пользователи, открывавшие контент программы за период", fmt: plain },
-    { key: "entryOrganic", title: "Entry Users · Organic", desc: "Выбрали цель этой программы в онбординге приложения (органика)", fmt: plain },
-    { key: "entryWeb", title: "Entry Users · Web", desc: "Начали путь в приложении с этой программы (веб)", fmt: plain },
+    { key: "entryUsers", title: "Entry Users", desc: "Выбрали цель этой программы в онбординге приложения", fmt: plain },
     { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
     { key: "lifetimeWeb", title: "Lifetime · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
     { key: "completionRate", title: "Completion Rate", desc: "Доля прошедших программу до конца", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
