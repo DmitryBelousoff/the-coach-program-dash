@@ -395,8 +395,9 @@
       m.rating == null ? null : (m.rating - 1) / 4,
       m.sentiment == null ? null : (m.sentiment + 1) / 2,
       m.catalogPull == null ? null : Math.min(m.catalogPull / 4, 1),
-    ].filter((v) => v != null);
-    if (!parts.length) return null;
+    ];
+    // Only meaningful when every component is known; a partial average would mislead.
+    if (parts.some((v) => v == null)) return null;
     return Math.round(100 * parts.reduce((a, b) => a + b, 0) / parts.length);
   }
 

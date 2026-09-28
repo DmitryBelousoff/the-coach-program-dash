@@ -258,8 +258,9 @@ async function dayOneReturn(auth, startEvent, returnEvent, range) {
   const data = (await r.json()).data || {};
   const series = (data.series && data.series[0]) || {};
   let returned = 0, cohort = 0;
+  // Each cohort's array is [cohort size, day 0, day 1, day 2, …].
   for (const days of Object.values(series.values || {})) {
-    const d1 = days && days[1];
+    const d1 = days && days[2];
     if (!d1 || d1.incomplete) continue;
     returned += d1.count;
     cohort += d1.outof;

@@ -21,6 +21,8 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | Entry Users · Organic | Уникальные пользователи, выбравшие в нативном онбординге цель программы (`OnboardingNativeQuestionAnswered.answer`) за период: `BEAT PREMATURE EJACULATION` → last_longer, `BEAT ERECTILE DYSFUNCTION` → keep_it_hard, `IMPROVE SEX SKILLS` → sex_skill_man, `BOOST OVERALL HEALTH` → overall_health. Только английские ответы. |
 
+| Return Rate | Из пользователей, у которых первое открытие урока программы (`DailyPlanItemOpen` с `title` из программы и historical count = 1, окно 365 дней) пришлось на период, — доля открывших урок той же программы на следующий день (N-day, день 1). Когорты по дням, учитываются только те, у кого день 1 уже завершён. |
+
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.
