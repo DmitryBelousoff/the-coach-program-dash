@@ -649,10 +649,19 @@
       ? "Пунктир — текущий, ещё не закончившийся период."
       : "Пунктир — выбранный период.";
     if (!trend.dialog.open) trend.dialog.showModal();
+    trend.current = { series, col };
     drawChart(series, col);
   }
 
   document.getElementById("trend-close").addEventListener("click", () => trend.dialog.close());
+  // Redraw on resize/rotation so the chart keeps matching the dialog width.
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (trend.dialog.open && trend.current) drawChart(trend.current.series, trend.current.col);
+    }, 120);
+  });
   trend.dialog.addEventListener("click", (e) => {
     // Click on the backdrop (outside the dialog box) closes it.
     const r = trend.dialog.getBoundingClientRect();
