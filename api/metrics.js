@@ -265,12 +265,18 @@ async function uniqueUsers(auth, event, range) {
 
 // Counts CoachLessonRating events per score (1–5) for the program's lessons, from both
 // the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
+// Rating counts are additive, so long id lists are split to keep URLs under the limit.
+const RATING_ID_CHUNK = 80;
+
 async function averageRating(auth, p, range) {
   let sum = 0, n = 0;
-  for (const prop of ["rating", "value"]) {
+  const ids = [...p.lessonIds];
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += RATING_ID_CHUNK) chunks.push(ids.slice(i, i + RATING_ID_CHUNK));
+  for (const prop of ["rating", "value"]) for (const chunk of chunks) {
     const event = {
       event_type: "CoachLessonRating",
-      filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: [...p.lessonIds] }],
+      filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: chunk }],
       group_by: [{ type: "event", value: prop }],
     };
     const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
