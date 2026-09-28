@@ -22,6 +22,7 @@
 const AIRTABLE_BASE = process.env.AIRTABLE_BASE || "app1k5mFTR9tmsZmO"; // (PROD) The Coach Programs
 const PROGRAM_FIELD = process.env.AIRTABLE_PROGRAM_FIELD || "Program";
 const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "headline";
+const LESSON_ID_FIELD = process.env.AIRTABLE_LESSON_ID_FIELD || "id"; // = lesson_id in Amplitude
 const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
 
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
@@ -106,7 +107,7 @@ async function resolveSchemas() {
     tables = (await airtable(`meta/bases/${AIRTABLE_BASE}/tables`)).tables || [];
   } catch (e) {
     if (process.env.AIRTABLE_TABLE) {
-      return { all: [], schemas: [{ table: process.env.AIRTABLE_TABLE, name: process.env.AIRTABLE_TABLE, program: PROGRAM_FIELD, headline: HEADLINE_FIELD }] };
+      return { all: [], schemas: [{ table: process.env.AIRTABLE_TABLE, name: process.env.AIRTABLE_TABLE, program: PROGRAM_FIELD, headline: HEADLINE_FIELD, lessonId: LESSON_ID_FIELD }] };
     }
     throw new Error("Set AIRTABLE_TABLE, or give the Airtable token the schema.bases:read scope so the table can be found");
   }
@@ -116,8 +117,9 @@ async function resolveSchemas() {
     if (wanted && t.id !== wanted && !eq(t.name, wanted)) continue;
     const program = t.fields.find((f) => eq(f.name, PROGRAM_FIELD));
     const headline = t.fields.find((f) => eq(f.name, HEADLINE_FIELD));
+    const lessonId = t.fields.find((f) => eq(f.name, LESSON_ID_FIELD));
     if (!program || !headline) continue;
-    const schema = { table: t.id, name: t.name, program: program.name, programType: program.type, headline: headline.name };
+    const schema = { table: t.id, name: t.name, program: program.name, programType: program.type, headline: headline.name, lessonId: lessonId && lessonId.name };
     if (program.type === "multipleRecordLinks") {
       const linked = tables.find((x) => x.id === program.options.linkedTableId);
       const primary = linked && linked.fields.find((f) => f.id === linked.primaryFieldId);
@@ -146,17 +148,20 @@ async function loadMapping() {
       }
     }
     const st = { table: schema.name, program: `${schema.program} (${schema.programType || "?"})`, headline: schema.headline, records: 0, noProgram: 0, noHeadline: 0, programs: {} };
-    for (const rec of await allRecords(schema.table, [schema.program, schema.headline])) {
+    const fields = [schema.program, schema.headline, ...(schema.lessonId ? [schema.lessonId] : [])];
+    for (const rec of await allRecords(schema.table, fields)) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
+      const lessonIds = schema.lessonId ? fieldValues(rec.fields[schema.lessonId]).map((s) => s.trim()).filter(Boolean) : [];
       const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v)
         .map((s) => s.trim()).filter(Boolean);
       if (!headlines.length) st.noHeadline++;
       if (!names.length) st.noProgram++;
       for (const name of names) {
         const id = slug(name);
-        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), tables: new Set() });
+        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), tables: new Set() });
         headlines.forEach((h) => programs.get(id).headlines.add(h));
+        lessonIds.forEach((l) => programs.get(id).lessonIds.add(l));
         programs.get(id).tables.add(schema.name);
         st.programs[name] = (st.programs[name] || 0) + 1;
       }
@@ -182,16 +187,24 @@ function selectPrograms(all) {
     if (female) excluded.push({ name: p.name, reason: "for women" });
     return !female;
   });
-  const owners = new Map();
-  for (const p of male) for (const h of p.headlines) owners.set(h, (owners.get(h) || 0) + 1);
-  const shared = [...owners].filter(([, n]) => n > 1).map(([h]) => h);
+  // Keeps only the values (headlines, lesson ids) that belong to exactly one program.
+  const onlyUnique = (key) => {
+    const owners = new Map();
+    for (const p of male) for (const v of p[key]) owners.set(v, (owners.get(v) || 0) + 1);
+    return {
+      shared: [...owners].filter(([, n]) => n > 1).map(([v]) => v),
+      keep: (p) => new Set([...p[key]].filter((v) => owners.get(v) === 1)),
+    };
+  };
+  const byHeadline = onlyUnique("headlines");
+  const byLessonId = onlyUnique("lessonIds");
   const programs = [];
   for (const p of male) {
-    const unique = new Set([...p.headlines].filter((h) => owners.get(h) === 1));
+    const unique = byHeadline.keep(p);
     if (!unique.size) { excluded.push({ name: p.name, reason: "all headlines shared with other programs" }); continue; }
-    programs.push({ ...p, headlines: unique, sharedDropped: p.headlines.size - unique.size });
+    programs.push({ ...p, headlines: unique, lessonIds: byLessonId.keep(p), sharedDropped: p.headlines.size - unique.size });
   }
-  return { programs, excluded, shared };
+  return { programs, excluded, shared: byHeadline.shared };
 }
 
 // ---------- Amplitude ----------
@@ -225,6 +238,9 @@ const METRICS = {
   // Return Rate: of users whose first lesson of the program falls in the range,
   // the share who opened a lesson of the same program again the next day.
   returnRate: (p) => (auth, range) => dayOneReturn(auth, lessonOpen(p, [FIRST_TIME]), lessonOpen(p), range),
+  // User Satisfaction: average 1–5 lesson rating of the program's lessons in the range
+  // (CoachLessonRating: `rating` on Android, `value` on iOS), weighted by number of ratings.
+  rating: (p) => p.lessonIds.size ? (auth, range) => averageRating(auth, p, range) : null,
 };
 const LIVE_METRICS = Object.keys(METRICS);
 
@@ -241,6 +257,35 @@ async function uniqueUsers(auth, event, range) {
   // seriesCollapsed holds the de-duplicated total for the whole range.
   const collapsed = data.seriesCollapsed && data.seriesCollapsed[0] && data.seriesCollapsed[0][0];
   return collapsed ? collapsed.value : 0;
+}
+
+// Counts CoachLessonRating events per score (1–5) for the program's lessons, from both
+// the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
+async function averageRating(auth, p, range) {
+  let sum = 0, n = 0;
+  for (const prop of ["rating", "value"]) {
+    const event = {
+      event_type: "CoachLessonRating",
+      filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: [...p.lessonIds] }],
+      group_by: [{ type: "event", value: prop }],
+    };
+    const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+    url.searchParams.set("e", JSON.stringify(event));
+    url.searchParams.set("m", "totals");
+    url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+    url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+    url.searchParams.set("limit", "20");
+    const r = await fetch(url, { headers: { Authorization: auth } });
+    if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+    const data = (await r.json()).data || {};
+    (data.seriesLabels || []).forEach((label, i) => {
+      // Labels look like [0, "5"] or "5"; "(none)" = the other platform's property.
+      const score = Number(Array.isArray(label) ? label[label.length - 1] : label);
+      const count = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0] ? data.seriesCollapsed[i][0].value : 0;
+      if (Number.isInteger(score) && score >= 1 && score <= 5) { sum += score * count; n += count; }
+    });
+  }
+  return n ? sum / n : null;
 }
 
 // Day-1 (N-day) retention pooled over all daily cohorts in the range whose day 1
@@ -299,12 +344,37 @@ export default async function handler(req, res) {
         programs: programs.map((p) => ({
           id: p.id, name: p.name, tables: [...p.tables],
           headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
+          lessonIds: p.lessonIds.size, lessonIdSample: [...p.lessonIds].slice(0, 5),
         })),
         excluded,
         // Headlines in more than one men's program; not counted for any of them.
         shared,
         allTables: mapping.tables,
       });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
+  // Diagnostics: raw Amplitude segmentation for one program's ratings, grouped by `prop`.
+  if (req.query.debug === "rating") {
+    try {
+      const { programs } = selectPrograms((await loadMapping()).programs);
+      const p = programs.find((x) => x.id === String(req.query.program || "last-longer"));
+      const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+      url.searchParams.set("e", JSON.stringify({
+        event_type: "CoachLessonRating",
+        filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: [...p.lessonIds] }],
+        group_by: [{ type: "event", value: String(req.query.prop || "value") }],
+      }));
+      url.searchParams.set("m", "totals");
+      url.searchParams.set("start", String(req.query.from).replace(/-/g, ""));
+      url.searchParams.set("end", String(req.query.to).replace(/-/g, ""));
+      const r = await fetch(url, { headers: { Authorization: amplitudeAuth() } });
+      const body = await r.json();
+      res.setHeader("Cache-Control", "no-store");
+      res.status(r.status).json({ lessonIds: p.lessonIds.size, seriesLabels: body.data && body.data.seriesLabels, seriesCollapsed: body.data && body.data.seriesCollapsed });
     } catch (e) {
       res.status(502).json({ error: e.message });
     }

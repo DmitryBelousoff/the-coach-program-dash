@@ -23,6 +23,8 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | Return Rate | Из пользователей, у которых первое открытие урока программы (`DailyPlanItemOpen` с `title` из программы и historical count = 1, окно 365 дней) пришлось на период, — доля открывших урок той же программы на следующий день (N-day, день 1). Когорты по дням, учитываются только те, у кого день 1 уже завершён. |
 
+| User Satisfaction | Средняя оценка 1–5 из `CoachLessonRating` (`rating` на Android, `value` на iOS) по урокам программы за период, взвешенная по числу оценок. Урок → программа: `lesson_id` = колонка `id` в Airtable. Сентимент отзывов пока не считается. |
+
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.
