@@ -206,6 +206,12 @@ export default async function handler(req, res) {
         base: AIRTABLE_BASE,
         used: stats,
         programs: programs.map((p) => ({ id: p.id, name: p.name, headlines: p.headlines.size, sample: [...p.headlines].slice(0, 5) })),
+        // Headlines that belong to more than one program: their viewers count in each.
+        shared: (() => {
+          const owners = new Map();
+          for (const p of programs) for (const h of p.headlines) owners.set(h, [...(owners.get(h) || []), p.name]);
+          return [...owners].filter(([, o]) => o.length > 1).map(([headline, programs]) => ({ headline, programs }));
+        })(),
         allTables: tables,
       });
     } catch (e) {
