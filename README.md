@@ -1,7 +1,7 @@
 # The Coach — Program Dashboard
 
 Program Health — панель эффективности программ: метрики в разрезе программ
-(Total Users, Entry Users, Lifetime, Completion Rate, Return Rate, User Satisfaction,
+(Active Users, New Users, Active to New Ratio, Lifetime, Completion Rate, Return Rate, User Satisfaction,
 Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 Статический сайт без сборки, деплоится на Vercel как есть.
@@ -17,11 +17,11 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | Метрика | Как считается |
 |---|---|
-| Total Users | Уникальные пользователи с ≥1 `DailyPlanItemOpen`, у которого `title` — один из Headline программы в Airtable, за выбранный период. Пользователь считается один раз на программу и попадает во все программы, контент которых открывал. |
+| Active Users | Уникальные пользователи с ≥1 `DailyPlanItemOpen`, у которого `title` — один из Headline программы в Airtable, за выбранный период. Пользователь считается один раз на программу и попадает во все программы, контент которых открывал. |
 
-| Entry Users | Уникальные пользователи, выбравшие в нативном онбординге цель программы (`OnboardingNativeQuestionAnswered.answer`) за период: `BEAT PREMATURE EJACULATION` → last_longer, `BEAT ERECTILE DYSFUNCTION` → keep_it_hard, `IMPROVE SEX SKILLS` → sex_skill_man, `BOOST OVERALL HEALTH` → overall_health. Только английские ответы. |
+| New Users | Уникальные пользователи, выбравшие в нативном онбординге цель программы (`OnboardingNativeQuestionAnswered.answer`) за период: `BEAT PREMATURE EJACULATION` → last_longer, `BEAT ERECTILE DYSFUNCTION` → keep_it_hard, `IMPROVE SEX SKILLS` → sex_skill_man, `BOOST OVERALL HEALTH` → overall_health. Только английские ответы. |
 
-| Pull Ratio | Total Users ÷ Entry Users за тот же период. Чем больше, тем сильнее программа притягивает пользователей сверх тех, кто выбрал её цель в онбординге. Только для программ с целью в онбординге. |
+| Active to New Ratio | Active Users ÷ New Users за тот же период. Чем больше, тем сильнее программа притягивает пользователей сверх тех, кто выбрал её цель в онбординге. Только для программ с целью в онбординге. |
 | Return Rate | Из пользователей, у которых первое открытие урока программы (`DailyPlanItemOpen` с `title` из программы и historical count = 1, окно 365 дней) пришлось на период, — доля открывших урок той же программы на следующий день (N-day, день 1). Когорты по дням, учитываются только те, у кого день 1 уже завершён. |
 
 | User Satisfaction | Средняя оценка 1–5 из `CoachLessonRating` (`rating` на Android, `value` на iOS) по урокам программы за период, взвешенная по числу оценок. Урок → программа: `lesson_id` ↔ колонка `id` в Airtable; обе стороны сравниваются без префикса `lesson_`/`exercise_` и без вставки `_video` у видеоуроков (`lessonKey` в `api/metrics.js`). Сентимент отзывов пока не считается. |

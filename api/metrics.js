@@ -278,7 +278,7 @@ const METRICS = {
         filters: [{ subprop_type: "event", subprop_key: "answer", subprop_op: "is", subprop_value: [ENTRY_GOALS[p.id]] }],
       }, range)
     : null,
-  // Pull Ratio: Total Users ÷ Entry Users — how many people the program reaches per
+  // Active to New Ratio (pullRatio): Active Users ÷ New Users — how many people the program reaches per
   // user who picked its goal in onboarding. Higher = more interesting beyond its own entrants.
   pullRatio: (p) => ENTRY_GOALS[p.id]
     ? async (auth, range) => {
@@ -300,7 +300,7 @@ const METRICS = {
 const LIVE_METRICS = Object.keys(METRICS);
 
 // Unique users over the whole range (deduplicated across days), via Event Segmentation.
-// Memoized: derived metrics (Pull Ratio) reuse the same queries as their inputs.
+// Memoized: derived metrics (Active to New Ratio) reuse the same queries as their inputs.
 const uniquesMemo = new Map(); // key -> { at, value: Promise }
 
 function uniqueUsers(auth, event, range) {
