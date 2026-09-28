@@ -152,7 +152,11 @@ async function loadMapping() {
     for (const rec of await allRecords(schema.table, fields)) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
-      const lessonIds = schema.lessonId ? fieldValues(rec.fields[schema.lessonId]).map((s) => s.trim()).filter(Boolean) : [];
+      // Amplitude's lesson_id is usually the Airtable id without its type prefix
+      // ("lesson_x" -> "x", "exercise_y" -> "y"), but not always, so keep both forms.
+      const lessonIds = (schema.lessonId ? fieldValues(rec.fields[schema.lessonId]) : [])
+        .map((s) => s.trim()).filter(Boolean)
+        .flatMap((v) => [v, v.replace(/^(lesson|exercise)_/, "")]);
       const names = fieldValues(rec.fields[schema.program]).map((v) => (linkNames && linkNames.get(v)) || v)
         .map((s) => s.trim()).filter(Boolean);
       if (!headlines.length) st.noHeadline++;
