@@ -28,6 +28,8 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 | Sharing | Сколько раз делились уроками программы за период: число событий `SharingVideoSent`, урок → программа по `lessonId` так же, как для оценок. |
 
+**Health score (предварительный, считается в браузере, `health()` в `index.html`):** взвешенное среднее составляющих, каждая переведена в 0–100 по фиксированным порогам — Return Rate 35% (30% → 100), User Satisfaction 30% (3,5 → 0, 5,0 → 100; только если ≥ 30 оценок), Active to New Ratio 25% (5× → 100), Sharing на 1 000 Active Users 10% (20 → 100). Отсутствующие составляющие пропускаются, веса остальных нормируются; нужно минимум две. Пересчитаем, когда появятся Completion Rate, Catalog Pull и сентимент.
+
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.
