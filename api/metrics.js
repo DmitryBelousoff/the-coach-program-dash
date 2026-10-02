@@ -29,6 +29,17 @@ const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
 
 // Onboarding goal (answer, as tracked) -> program id (slug of the Airtable Program).
 // English answers only for now.
+// Display names for program ids (slug of the Airtable Program code); others show the code.
+const DISPLAY_NAMES = {
+  "sex-skill-man": "Sex is a skill",
+  "navigating-arguments-man": "Solving couple fights",
+  "sexting-man": "A man's guide to sexting",
+  "last-longer": "Last longer",
+  "keep-it-hard": "Keep it hard",
+  "kegel-only": "Kegel Challenge",
+  "overall-health": "Overall Health",
+};
+
 const ENTRY_GOALS = {
   "last-longer": "BEAT PREMATURE EJACULATION",
   "keep-it-hard": "BEAT ERECTILE DYSFUNCTION",
@@ -574,7 +585,7 @@ export default async function handler(req, res) {
 
     const prevRange = { from: addDays(range.from, -days), to: addDays(range.to, -days) };
     // One task per program × metric × period; metrics without a source stay null.
-    const rows = programs.map((p) => ({ id: p.id, name: p.name, current: {}, previous: {} }));
+    const rows = programs.map((p) => ({ id: p.id, name: DISPLAY_NAMES[p.id] || p.name, code: p.name, current: {}, previous: {} }));
     const tasks = [];
     programs.forEach((p, i) => {
       for (const metric of LIVE_METRICS) {
