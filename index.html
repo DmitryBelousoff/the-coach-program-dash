@@ -256,6 +256,56 @@
     .prog-name{font-size:15px;}
     .card{margin-top:24px;}
   }
+
+  [hidden]{display:none !important;}
+
+  /* ---------- analytics chat ---------- */
+  .chat-fab{
+    position:fixed; right:24px; bottom:calc(24px + env(safe-area-inset-bottom, 0px)); z-index:20;
+    font:inherit; font-size:15px; font-weight:700; color:#fff; cursor:pointer;
+    height:50px; padding:0 22px; border-radius:999px; border:0;
+    background:linear-gradient(180deg, var(--gold) 0%, var(--gold-strong) 100%);
+    box-shadow:0 8px 24px rgba(138,100,23,0.32);
+  }
+  .chat-fab:hover{filter:brightness(1.06);}
+  .chat-panel{
+    position:fixed; top:0; right:0; bottom:0; z-index:30; width:min(460px, 100vw);
+    display:flex; flex-direction:column; background:var(--surface);
+    border-left:1px solid var(--hairline); box-shadow:-20px 0 60px rgba(0,0,0,0.12);
+    padding-top:env(safe-area-inset-top, 0px); padding-bottom:env(safe-area-inset-bottom, 0px);
+  }
+  .chat-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border-bottom:1px solid var(--hairline);}
+  .chat-head h2{margin:0; font-size:18px; font-weight:800;}
+  .chat-head p{margin:2px 0 0; font-size:12px; color:var(--ink-mute);}
+  .chat-log{flex:1; overflow-y:auto; padding:18px 20px; display:flex; flex-direction:column; gap:14px;}
+  .msg{max-width:92%; font-size:14px; line-height:1.55; overflow-wrap:anywhere;}
+  .msg.user{align-self:flex-end; background:var(--gold-dim); color:var(--ink); padding:10px 14px; border-radius:14px 14px 4px 14px; white-space:pre-wrap;}
+  .msg.bot{align-self:flex-start; color:var(--ink);}
+  .msg.bot p{margin:0 0 8px;} .msg.bot p:last-child{margin-bottom:0;}
+  .msg.bot ul, .msg.bot ol{margin:0 0 8px; padding-left:20px;}
+  .msg.bot table{border-collapse:collapse; font-size:13px; margin:6px 0; display:block; overflow-x:auto;}
+  .msg.bot th, .msg.bot td{border:1px solid var(--hairline-strong); padding:4px 8px; text-align:left; white-space:nowrap;}
+  .msg.bot th{background:var(--surface-2); font-weight:600;}
+  /* reset the dashboard table's cell sizing inside chat answers */
+  .msg.bot thead th, .msg.bot tbody td{height:auto; padding:4px 8px; vertical-align:top;}
+  .msg.bot tbody td{background:none;}
+  .msg.bot code{font-family:var(--font-mono); font-size:12px; background:var(--chip); padding:1px 4px; border-radius:4px;}
+  .msg.error{color:var(--down);}
+  .msg.pending{color:var(--ink-mute); font-style:italic;}
+  .chat-suggest{display:flex; flex-wrap:wrap; gap:8px;}
+  .chat-suggest button{
+    font:inherit; font-size:13px; color:var(--ink-dim); cursor:pointer; text-align:left;
+    background:var(--surface-2); border:1px solid var(--hairline); border-radius:10px; padding:8px 12px;
+  }
+  .chat-suggest button:hover{color:var(--ink); border-color:var(--hairline-strong);}
+  .chat-form{display:flex; gap:8px; padding:14px 16px; border-top:1px solid var(--hairline);}
+  .chat-form textarea{
+    flex:1; resize:none; font:inherit; font-size:14px; line-height:1.4; color:var(--ink);
+    padding:10px 12px; border-radius:12px; border:1px solid var(--hairline-strong); background:var(--surface); max-height:140px;
+  }
+  .chat-form .btn-primary{height:auto; padding:0 18px; width:auto; flex:none;}
+  .chat-form .btn-primary:disabled{opacity:.5; cursor:default;}
+  @media (max-width: 720px){ .chat-fab{right:16px; bottom:calc(16px + env(safe-area-inset-bottom, 0px));} }
 </style>
 </head>
 <body>
@@ -323,6 +373,33 @@
   <p class="trend-note" id="trend-note"></p>
 </dialog>
 
+<button type="button" class="chat-fab" id="chat-open">Спросить аналитика</button>
+<aside class="chat-panel" id="chat-panel" hidden aria-label="Чат с аналитиком">
+  <div class="chat-head">
+    <div>
+      <h2>Аналитик</h2>
+      <p>Отвечает по данным дашборда · ответ до ~30 секунд</p>
+    </div>
+    <button type="button" class="close" id="chat-close" aria-label="Закрыть чат">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+    </button>
+  </div>
+  <div class="chat-log" id="chat-log" aria-live="polite">
+    <div class="msg bot">Спросите про программы: динамику, сравнение, что изменилось за период. Я посчитаю по тем же данным, что и таблица.</div>
+    <div class="chat-suggest" id="chat-suggest">
+      <button type="button">Какие программы просели за последнюю неделю и насколько?</button>
+      <button type="button">Сравни программы по Return Rate и оценке за месяц</button>
+      <button type="button">Как менялись Active Users у Last longer за 10 недель?</button>
+    </div>
+  </div>
+  <form class="chat-form" id="chat-form">
+    <textarea id="chat-input" rows="2" placeholder="Ваш вопрос…" aria-label="Вопрос"></textarea>
+    <button type="submit" class="btn-primary" id="chat-send">Отправить</button>
+  </form>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" defer></script>
 <script src="data.js"></script>
 <script>
 (function () {
@@ -774,6 +851,86 @@
     if (!name) { e.preventDefault(); return; }
     window.DashboardData.addProgram(name);
     load();
+  });
+
+
+  // ---------- analytics chat ----------
+  const chat = {
+    panel: document.getElementById("chat-panel"),
+    log: document.getElementById("chat-log"),
+    form: document.getElementById("chat-form"),
+    input: document.getElementById("chat-input"),
+    send: document.getElementById("chat-send"),
+    suggest: document.getElementById("chat-suggest"),
+    history: [], // [{ role, content }]
+    busy: false,
+  };
+
+  function renderMarkdown(text) {
+    if (window.marked && window.DOMPurify) return window.DOMPurify.sanitize(window.marked.parse(text));
+    return escapeHTML(text).replace(/\n/g, "<br>");
+  }
+
+  function addMessage(kind, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    if (kind === "bot") div.innerHTML = renderMarkdown(text);
+    else div.textContent = text;
+    chat.log.appendChild(div);
+    chat.log.scrollTop = chat.log.scrollHeight;
+    return div;
+  }
+
+  async function ask(question) {
+    question = question.trim();
+    if (!question || chat.busy) return;
+    chat.busy = true; chat.send.disabled = true;
+    if (chat.suggest) { chat.suggest.remove(); chat.suggest = null; }
+    addMessage("user", question);
+    chat.history.push({ role: "user", content: question });
+    const pending = addMessage("pending", "Считаю…");
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: chat.history, context: { period: state.period, date: state.date } }),
+      });
+      const body = await r.json().catch(() => ({}));
+      pending.remove();
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      chat.history.push({ role: "assistant", content: body.reply });
+      addMessage("bot", body.reply);
+    } catch (e) {
+      pending.remove();
+      chat.history.pop(); // let the user retry the same question
+      addMessage("error", "Не получилось ответить: " + e.message);
+    } finally {
+      chat.busy = false; chat.send.disabled = false;
+      chat.input.focus();
+    }
+  }
+
+  document.getElementById("chat-open").addEventListener("click", () => {
+    chat.panel.hidden = false;
+    document.getElementById("chat-open").hidden = true;
+    chat.input.focus();
+  });
+  document.getElementById("chat-close").addEventListener("click", () => {
+    chat.panel.hidden = true;
+    document.getElementById("chat-open").hidden = false;
+  });
+  chat.form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = chat.input.value;
+    chat.input.value = "";
+    ask(q);
+  });
+  chat.input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chat.form.requestSubmit(); }
+  });
+  chat.suggest.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) ask(b.textContent);
   });
 
   load();

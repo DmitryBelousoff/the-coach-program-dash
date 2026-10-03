@@ -41,10 +41,15 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 Остальные метрики пока демо и в живом режиме показываются как «—».
 
+## Чат с аналитиком
+
+Кнопка «Спросить аналитика» открывает чат. `api/chat.js` отправляет вопрос в Claude (`claude-opus-5-5`) с двумя инструментами — `get_program_metrics` и `get_metric_history`, — которые вызывают те же расчёты, что и таблица (`api/metrics.js`), так что цифры в ответах совпадают с дашбордом. Определения метрик и ограничения данных — в системном промпте. Нужен `ANTHROPIC_API_KEY`.
+
 ## Переменные окружения (Vercel → Settings → Environment Variables)
 
 | Переменная | Что это |
 |---|---|
+| `ANTHROPIC_API_KEY` | ключ Claude API для чата (console.anthropic.com → API Keys) |
 | `AMPLITUDE_API_KEY`, `AMPLITUDE_SECRET_KEY` | ключи проекта «The Coach: for men only» (Amplitude → Settings → Projects) |
 | `AIRTABLE_TOKEN` | personal access token Airtable со scope `data.records:read` и `schema.bases:read` на базу «(PROD) The Coach Programs» (`app1k5mFTR9tmsZmO`) |
 | `AIRTABLE_TABLE` | необязательно: таблица с уроками. По умолчанию ищется в базе по колонкам `headline` и `Program` (для этого нужен `schema.bases:read`) |

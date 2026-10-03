@@ -1,5 +1,8 @@
 {
   "name": "the-coach-program-dash",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0"
+  }
 }
