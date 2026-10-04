@@ -218,6 +218,11 @@ const fmtInt = (v) => Math.round(v).toLocaleString("ru-RU");
 const fmtPct = (v, d = 1) => (v * 100).toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
 const fmtNum = (v, d = 2) => v.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d });
 const signed = (v, d = 0) => (v > 0 ? "+" : "−") + Math.abs(v).toLocaleString("ru-RU", { maximumFractionDigits: d }) + "%";
+const plural = (n, one, few, many) => {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+const weeksWord = (n) => `${n} ${plural(n, "неделю", "недели", "недель")}`;
 const weekLabel = (w) => { const d = parseDate(w); return `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
 
 const METRICS = {
@@ -260,7 +265,8 @@ function detect(history) {
         const extreme = isMin ? `минимум за ${allPrev.length + 1} недель` : isMax ? `максимум за ${allPrev.length + 1} недель` : (z > 0 ? "заметно выше нормы" : "заметно ниже нормы");
         add({
           type: "Аномалия", tone: z > 0 ? "up" : "down", program: p.id, metric: m.dashboardKey,
-          score: Math.min(Math.abs(z), 4) * 1.6 + (isMin || isMax ? 1.5 : 0),
+          // A record without a strong deviation from the norm is a weaker signal.
+          score: (Math.min(Math.abs(z), 4) * 1.6 + (isMin || isMax ? 1.5 : 0)) * (Math.abs(z) >= 2 ? 1 : 0.6),
           title: `${m.label} у ${p.name}: ${extreme}`,
           detail: `Неделя ${weekLabel(weeks[last])}: ${m.fmt(s[last])} при норме ${m.fmt(mu)} (среднее ${base.length} предыдущих недель${Math.abs(z) < 10 ? `, отклонение ${fmtNum(Math.abs(z), 1)}σ` : ""}).`,
         });
@@ -278,8 +284,62 @@ function detect(history) {
         if (Math.abs(change) >= 8) add({
           type: "Тренд", tone: dir > 0 ? "up" : "down", program: p.id, metric: m.dashboardKey,
           score: k * 0.9 + Math.min(Math.abs(change), 40) / 10,
-          title: `${m.label} у ${p.name} ${dir > 0 ? "растёт" : "снижается"} ${k} недель подряд`,
+          title: `${m.label} у ${p.name} ${dir > 0 ? "растёт" : "снижается"} ${weeksWord(k)} подряд`,
           detail: `С недели ${weekLabel(weeks[last - k])} по ${weekLabel(weeks[last])}: ${m.fmt(s[last - k])} → ${m.fmt(s[last])} (${signed(change)}).`,
+        });
+      }
+    }
+
+    // 2b. Rating drifting: last 4 weeks vs the 4 before (or since launch), enough ratings.
+    {
+      const r = reliable(p, "rating");
+      let recent = clean(r.slice(-4)), ref = clean(r.slice(-8, -4));
+      if (ref.length < 2) {
+        // Young program: compare the second half of its rated weeks with the first.
+        const all = clean(r);
+        if (all.length >= 4) { const h = Math.floor(all.length / 2); ref = all.slice(0, h); recent = all.slice(h); }
+      }
+      if (recent.length >= 2 && ref.length >= 2) {
+        const d = mean(recent) - mean(ref);
+        const firstR = r.findIndex((v) => v != null);
+        if (Math.abs(d) >= 0.12) add({
+          type: "Тренд", tone: d > 0 ? "up" : "down", program: p.id, metric: "rating",
+          score: Math.abs(d) * 22,
+          title: `Оценка ${p.name} ${d > 0 ? "растёт" : "снижается"}`,
+          detail: `Последние ${weeksWord(recent.length)} в среднем ${fmtNum(mean(recent))} против ${fmtNum(mean(ref))} раньше; неделя ${weekLabel(weeks[last])}: ${r[last] == null ? "мало оценок" : fmtNum(r[last])}${firstR >= 0 && r[firstR] != null ? ` (в первую неделю было ${fmtNum(r[firstR])})` : ""}.`,
+        });
+      }
+    }
+
+    // 2c. New program: launched inside the window and fading after its launch peak.
+    {
+      const first = p.active.findIndex((v) => v >= 50);
+      if (first > 0 && p.active.slice(0, first).every((v) => !v || v < 10) && last - first >= 3) {
+        const after = p.active.slice(first);
+        const peak = Math.max(...after), peakAt = first + after.indexOf(peak);
+        const drop = (p.active[last] - peak) / peak * 100;
+        const r = reliable(p, "rating");
+        const rFirst = r.slice(first).find((v) => v != null), rLast = r[last];
+        if (drop <= -20 && peakAt < last) add({
+          type: "Запуск", tone: "down", program: p.id, metric: "totalUsers",
+          score: 5 + Math.min(Math.abs(drop), 60) / 10,
+          title: `${p.name}: интерес после запуска угасает`,
+          detail: `Программа появилась на неделе ${weekLabel(weeks[first])}, пик ${fmtInt(peak)} активных на неделе ${weekLabel(weeks[peakAt])}, сейчас ${fmtInt(p.active[last])} (${signed(drop)})${rFirst != null && rLast != null ? `; оценка за это время ${fmtNum(rFirst)} → ${fmtNum(rLast)}` : ""}.`,
+        });
+      }
+    }
+
+    // 2d. Audience size vs rating within the program: growth that dilutes satisfaction.
+    {
+      const rAR = pearson(p.active, reliable(p, "rating"));
+      const r = clean(reliable(p, "rating"));
+      if (rAR != null && rAR <= -0.7 && r.length >= 8) {
+        const a = clean(p.active);
+        add({
+          type: "Корреляция", tone: "down", program: p.id, metric: "rating",
+          score: (Math.abs(rAR) - 0.6) * 14,
+          title: `${p.name}: чем больше аудитория, тем ниже оценка`,
+          detail: `Корреляция Active Users и оценки по неделям r = ${fmtNum(rAR)}: аудитория ${fmtInt(a[0])} → ${fmtInt(a[a.length - 1])}, оценка ${fmtNum(r[0])} → ${fmtNum(r[r.length - 1])}. Новые волны пользователей, похоже, менее довольны контентом, чем первые.`,
         });
       }
     }
@@ -296,6 +356,22 @@ function detect(history) {
           score: Math.min(Math.abs(tNew - tAct), 15) / 2 + 2,
           title: `${p.name}: New Users и Active Users идут в разные стороны`,
           detail: `За 6 недель New Users ${signed(tNew, 1)} в неделю, Active Users ${signed(tAct, 1)} в неделю — ${story}.`,
+        });
+      }
+
+      // 3b. Share of new users who actually reach the lessons: first 4 vs last 4 weeks.
+      const ratio = p.active.map((a, i) => (p.newUsers[i] ? a / p.newUsers[i] : null));
+      const early = clean(ratio.slice(0, 4)), late = clean(ratio.slice(-4));
+      if (early.length >= 3 && late.length >= 3) {
+        const ch = (mean(late) - mean(early)) / mean(early) * 100;
+        const tNew = trendPct(p.newUsers);
+        if (Math.abs(ch) >= 20) add({
+          type: "Расхождение", tone: ch > 0 ? "up" : "down", program: p.id, metric: "pullRatio",
+          score: Math.min(Math.abs(ch), 50) / 7 + 1.5,
+          title: ch < 0
+            ? `${p.name}: всё меньше пришедших за этой целью доходят до уроков`
+            : `${p.name}: программа собирает всё больше аудитории сверх онбординга`,
+          detail: `Active to New Ratio ${fmtNum(mean(early))}× в начале периода и ${fmtNum(mean(late))}× в последние 4 недели (${signed(ch)}) при ${Math.abs(tNew || 0) < 1.5 ? "стабильном" : (tNew > 0 ? "растущем" : "снижающемся")} притоке New Users.`,
         });
       }
 
@@ -363,6 +439,13 @@ function detect(history) {
         detail: `За 4 недели оценка ${fmtNum(x.rating)} (${rr(x) + 1}-е место из ${pairs.length}), Return Rate ${fmtPct(x.ret)} (${rt(x) + 1}-е место). ${gap > 0 ? "Контент нравится, но не создаёт привычки — стоит посмотреть на напоминания и следующий шаг после урока." : "Привычку программа формирует, а качество уроков есть куда поднять."}`,
       });
     }
+  }
+
+  // When every program moved the same way, single-program volume anomalies in that
+  // direction are the same story — keep the shared insight on top, demote the rest.
+  const shared = out.find((c) => c.type === "Сравнение" && !c.program);
+  if (shared) for (const c of out) {
+    if (c.type === "Аномалия" && c.tone === shared.tone && (c.metric === "totalUsers" || c.metric === "entryUsers")) c.score *= 0.45;
   }
 
   // Highest first, spread across programs and types: first pass takes one insight per
