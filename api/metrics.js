@@ -248,14 +248,39 @@ export function selectPrograms(all) {
 
 // ---------- Amplitude ----------
 
-// Global limiter: Amplitude allows only a few concurrent Dashboard API queries per
-// project, however the calls are nested (programs × metrics × periods, shared ratings).
-let amplitudeActive = 0;
-const amplitudeQueue = [];
+// Global limiter: Amplitude caps both the number of concurrent Dashboard API queries
+// (5) and their summed cost ("Exceeded concurrent limit with query of cost 415" for an
+// 84-day query). Cost grows with the date range, so it is estimated from the query's
+// days (~5 units/day observed) and the in-flight total is kept under a budget.
+const AMPLITUDE_COST_BUDGET = 900;
+let amplitudeActive = 0, amplitudeCost = 0;
+const amplitudeQueue = []; // [{ cost, resolve }]
+
+function estimateCost(url) {
+  const u = new URL(url);
+  const start = parseDate(String(u.searchParams.get("start") || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"));
+  const end = parseDate(String(u.searchParams.get("end") || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"));
+  const days = start && end ? Math.round((end - start) / 86400000) + 1 : 30;
+  return Math.min(AMPLITUDE_COST_BUDGET, days * 5);
+}
+
+function canStart(cost) {
+  return amplitudeActive < AMPLITUDE_CONCURRENCY && (amplitudeActive === 0 || amplitudeCost + cost <= AMPLITUDE_COST_BUDGET);
+}
+
+function releaseNext() {
+  // Start queued queries in order while they fit.
+  while (amplitudeQueue.length && canStart(amplitudeQueue[0].cost)) {
+    const next = amplitudeQueue.shift();
+    amplitudeActive++; amplitudeCost += next.cost;
+    next.resolve();
+  }
+}
 
 export async function amplitudeFetch(url, auth) {
-  if (amplitudeActive >= AMPLITUDE_CONCURRENCY) await new Promise((resolve) => amplitudeQueue.push(resolve));
-  amplitudeActive++;
+  const cost = estimateCost(url);
+  if (amplitudeQueue.length || !canStart(cost)) await new Promise((resolve) => amplitudeQueue.push({ cost, resolve }));
+  else { amplitudeActive++; amplitudeCost += cost; }
   try {
     // Amplitude answers 429 when the project's concurrency/cost limit is hit
     // (e.g. several dashboard loads at once): wait and retry a few times.
@@ -275,9 +300,8 @@ export async function amplitudeFetch(url, auth) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   } finally {
-    amplitudeActive--;
-    const next = amplitudeQueue.shift();
-    if (next) next();
+    amplitudeActive--; amplitudeCost -= cost;
+    releaseNext();
   }
 }
 
