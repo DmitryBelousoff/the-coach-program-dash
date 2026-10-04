@@ -257,7 +257,15 @@ async function amplitudeFetch(url, auth) {
   if (amplitudeActive >= AMPLITUDE_CONCURRENCY) await new Promise((resolve) => amplitudeQueue.push(resolve));
   amplitudeActive++;
   try {
-    return await fetch(url, { headers: { Authorization: auth } });
+    // Amplitude answers 429 when the project's concurrency/cost limit is hit
+    // (e.g. several dashboard loads at once): wait and retry a few times.
+    for (let attempt = 0; ; attempt++) {
+      const r = await fetch(url, { headers: { Authorization: auth } });
+      if (r.status !== 429 || attempt >= 3) return r;
+      const retryAfter = Number(r.headers.get("retry-after"));
+      const waitMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 10000) : 1500 * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
   } finally {
     amplitudeActive--;
     const next = amplitudeQueue.shift();
