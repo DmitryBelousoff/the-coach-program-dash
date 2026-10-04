@@ -260,25 +260,39 @@
   [hidden]{display:none !important;}
 
   /* ---------- analytics chat ---------- */
-  .chat-fab{
-    position:fixed; right:24px; bottom:calc(24px + env(safe-area-inset-bottom, 0px)); z-index:20;
-    font:inherit; font-size:15px; font-weight:700; color:#fff; cursor:pointer;
-    height:50px; padding:0 22px; border-radius:999px; border:0;
-    background:linear-gradient(180deg, var(--gold) 0%, var(--gold-strong) 100%);
-    box-shadow:0 8px 24px rgba(138,100,23,0.32);
+  .insights{
+    margin-top:28px; background:var(--surface); border:1px solid var(--hairline); border-radius:16px;
+    box-shadow:var(--shadow); padding:22px 24px;
   }
-  .chat-fab:hover{filter:brightness(1.06);}
-  .chat-panel{
-    position:fixed; top:0; right:0; bottom:0; z-index:30; width:min(460px, 100vw);
-    display:flex; flex-direction:column; background:var(--surface);
-    border-left:1px solid var(--hairline); box-shadow:-20px 0 60px rgba(0,0,0,0.12);
-    padding-top:env(safe-area-inset-top, 0px); padding-bottom:env(safe-area-inset-bottom, 0px);
+  .insights-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+  .insights h2{margin:0; font-size:20px; font-weight:800; letter-spacing:-0.01em;}
+  .insights-period{font-size:13px; color:var(--ink-mute);}
+  .insights ol{list-style:none; margin:16px 0 0; padding:0; display:grid; gap:10px;}
+  .insight{display:flex; gap:12px; align-items:flex-start; font-size:15px; line-height:1.5;}
+  .insight-mark{
+    flex:none; width:26px; height:26px; border-radius:8px; display:grid; place-items:center;
+    font-family:var(--font-mono); font-size:12px; font-weight:600; background:var(--chip); color:var(--ink-mute);
   }
-  .chat-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border-bottom:1px solid var(--hairline);}
+  .insight.up .insight-mark{background:var(--up-dim); color:var(--up);}
+  .insight.down .insight-mark{background:var(--down-dim); color:var(--down);}
+  .insight b{font-weight:600;}
+  .insight button.link{
+    display:inline; font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left;
+    border-bottom:1px dashed var(--hairline-strong);
+  }
+  .insight button.link:hover{border-bottom-color:var(--ink-mute);}
+  .insights-empty{margin:14px 0 0; color:var(--ink-mute); font-size:14px;}
+
+  .ask-btn{margin-top:20px;}
+  .chat-inline{
+    margin-top:16px; background:var(--surface); border:1px solid var(--hairline); border-radius:16px;
+    box-shadow:var(--shadow); display:flex; flex-direction:column; overflow:hidden;
+  }
+  .chat-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--hairline);}
   .chat-head h2{margin:0; font-size:18px; font-weight:800;}
   .chat-head p{margin:2px 0 0; font-size:12px; color:var(--ink-mute);}
-  .chat-log{flex:1; overflow-y:auto; padding:18px 20px; display:flex; flex-direction:column; gap:14px;}
-  .msg{max-width:92%; font-size:14px; line-height:1.55; overflow-wrap:anywhere;}
+  .chat-log{max-height:min(560px, 65vh); min-height:160px; overflow-y:auto; padding:18px 20px; display:flex; flex-direction:column; gap:14px;}
+  .msg{max-width:min(92%, 760px); font-size:14px; line-height:1.55; overflow-wrap:anywhere;}
   .msg.user{align-self:flex-end; background:var(--gold-dim); color:var(--ink); padding:10px 14px; border-radius:14px 14px 4px 14px; white-space:pre-wrap;}
   .msg.bot{align-self:flex-start; color:var(--ink);}
   .msg.bot p{margin:0 0 8px;} .msg.bot p:last-child{margin-bottom:0;}
@@ -305,7 +319,7 @@
   }
   .chat-form .btn-primary{height:auto; padding:0 18px; width:auto; flex:none;}
   .chat-form .btn-primary:disabled{opacity:.5; cursor:default;}
-  @media (max-width: 720px){ .chat-fab{right:16px; bottom:calc(16px + env(safe-area-inset-bottom, 0px));} }
+  @media (max-width: 720px){ .insights{padding:18px 16px;} .ask-btn{width:100%;} .chat-log{padding:16px;} }
 </style>
 </head>
 <body>
@@ -343,6 +357,40 @@
     <b>Health score</b> (кольцо у названия, предварительный) — взвешенное среднее: Return Rate 35% (30% = 100 баллов), User Satisfaction 30% (3,5 → 0, 5,0 → 100; от 30 оценок), Active to New Ratio 25% (5× = 100), Sharing на 1 000 Active Users 10% (20 = 100). Нет составляющей — её вес делится между остальными. Наведите на кольцо, чтобы увидеть разбивку.
     Бейджи показывают изменение к предыдущему периоду такой же длины; клик по бейджу (у User Satisfaction — по значению) открывает динамику. Клик по заголовку столбца — сортировка.
   </p>
+
+  <section class="insights" aria-labelledby="insights-title">
+    <div class="insights-head">
+      <h2 id="insights-title">Главное за период</h2>
+      <span class="insights-period" id="insights-period"></span>
+    </div>
+    <ol id="insights-list"></ol>
+    <p class="insights-empty" id="insights-empty" hidden>Существенных изменений к предыдущему периоду нет.</p>
+  </section>
+
+  <button type="button" class="btn-primary ask-btn" id="chat-open" aria-expanded="false" aria-controls="chat-panel">Ask AI analyst</button>
+  <section class="chat-inline" id="chat-panel" hidden aria-label="Чат с AI-аналитиком">
+    <div class="chat-head">
+      <div>
+        <h2>AI analyst</h2>
+        <p>Отвечает по данным дашборда · ответ до ~30 секунд</p>
+      </div>
+      <button type="button" class="close" id="chat-close" aria-label="Свернуть чат">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+      </button>
+    </div>
+    <div class="chat-log" id="chat-log" aria-live="polite">
+      <div class="msg bot">Спросите про программы: динамику, сравнение, что изменилось за период. Я посчитаю по тем же данным, что и таблица.</div>
+      <div class="chat-suggest" id="chat-suggest">
+        <button type="button">Какие программы просели за последнюю неделю и насколько?</button>
+        <button type="button">Сравни программы по Return Rate и оценке за месяц</button>
+        <button type="button">Как менялись Active Users у Last longer за 10 недель?</button>
+      </div>
+    </div>
+    <form class="chat-form" id="chat-form">
+      <textarea id="chat-input" rows="2" placeholder="Ваш вопрос…" aria-label="Вопрос"></textarea>
+      <button type="submit" class="btn-primary" id="chat-send">Отправить</button>
+    </form>
+  </section>
 </div>
 
 <dialog id="add-dialog">
@@ -373,30 +421,6 @@
   <p class="trend-note" id="trend-note"></p>
 </dialog>
 
-<button type="button" class="chat-fab" id="chat-open">Спросить аналитика</button>
-<aside class="chat-panel" id="chat-panel" hidden aria-label="Чат с аналитиком">
-  <div class="chat-head">
-    <div>
-      <h2>Аналитик</h2>
-      <p>Отвечает по данным дашборда · ответ до ~30 секунд</p>
-    </div>
-    <button type="button" class="close" id="chat-close" aria-label="Закрыть чат">
-      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
-    </button>
-  </div>
-  <div class="chat-log" id="chat-log" aria-live="polite">
-    <div class="msg bot">Спросите про программы: динамику, сравнение, что изменилось за период. Я посчитаю по тем же данным, что и таблица.</div>
-    <div class="chat-suggest" id="chat-suggest">
-      <button type="button">Какие программы просели за последнюю неделю и насколько?</button>
-      <button type="button">Сравни программы по Return Rate и оценке за месяц</button>
-      <button type="button">Как менялись Active Users у Last longer за 10 недель?</button>
-    </div>
-  </div>
-  <form class="chat-form" id="chat-form">
-    <textarea id="chat-input" rows="2" placeholder="Ваш вопрос…" aria-label="Вопрос"></textarea>
-    <button type="submit" class="btn-primary" id="chat-send">Отправить</button>
-  </form>
-</aside>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" defer></script>
@@ -638,6 +662,104 @@
     }
   }
 
+  // ---------- insights ----------
+  // Rule-based: every notable change becomes a candidate with a significance score;
+  // the top 3–5 are shown, at most two per metric so one metric doesn't crowd the list.
+  const insightsEl = {
+    list: document.getElementById("insights-list"),
+    empty: document.getElementById("insights-empty"),
+    period: document.getElementById("insights-period"),
+  };
+
+  function signedPct(pct) {
+    return (pct > 0 ? "+" : "−") + nf1.format(Math.abs(pct)) + "%";
+  }
+
+  function buildInsights(data) {
+    const out = [];
+    const programs = data.programs.filter((p) => !p.custom);
+    const link = (p, metric, text) => `<button type="button" class="link" data-trend="${escapeHTML(p.id)}" data-metric="${metric}">${text}</button>`;
+    const name = (p) => `<b>${escapeHTML(p.name)}</b>`;
+
+    for (const p of programs) {
+      const c = p.current, v = p.previous;
+      // Volume changes: significance grows with the change and (sub-linearly) with the audience.
+      for (const [key, title, minPrev] of [["totalUsers", "Active Users", 100], ["entryUsers", "New Users", 50]]) {
+        const pct = pctChange(c[key], v[key]);
+        if (pct == null || v[key] < minPrev || Math.abs(pct) < 5) continue;
+        out.push({
+          metric: key, tone: pct > 0 ? "up" : "down",
+          score: Math.abs(pct) * Math.sqrt(Math.min(1, v[key] / 1000)),
+          html: `${link(p, key, `${title} у ${name(p)} ${signedPct(pct)}`)}: ${nf0.format(v[key])} → ${nf0.format(c[key])}`,
+        });
+      }
+      // Return Rate in percentage points, only with a meaningful audience behind it.
+      if (c.returnRate != null && v.returnRate != null && (c.totalUsers || 0) >= 200) {
+        const pp = (c.returnRate - v.returnRate) * 100;
+        if (Math.abs(pp) >= 2) out.push({
+          metric: "returnRate", tone: pp > 0 ? "up" : "down", score: Math.abs(pp) * 2.5,
+          html: `${link(p, "returnRate", `Return Rate у ${name(p)} ${pp > 0 ? "вырос" : "упал"}`)} с ${nf1.format(v.returnRate * 100)}% до ${nf1.format(c.returnRate * 100)}% (${pp > 0 ? "+" : "−"}${nf1.format(Math.abs(pp))} п. п.)`,
+        });
+      }
+      // Rating, only with enough ratings in both periods.
+      if (c.rating != null && v.rating != null && (c.ratingCount || 0) >= 30 && (v.ratingCount || 0) >= 30) {
+        const d = c.rating - v.rating;
+        if (Math.abs(d) >= 0.15) out.push({
+          metric: "rating", tone: d > 0 ? "up" : "down", score: Math.abs(d) * 40,
+          html: `${link(p, "rating", `Оценка ${name(p)} ${d > 0 ? "выросла" : "снизилась"}`)}: ${nf2.format(v.rating)} → ${nf2.format(c.rating)} (${nf0.format(c.ratingCount)} оценок)`,
+        });
+      }
+    }
+
+    // All new users across programs with an onboarding goal.
+    const withNew = programs.filter((p) => p.current.entryUsers != null && p.previous.entryUsers != null);
+    if (withNew.length) {
+      const cur = withNew.reduce((a, p) => a + p.current.entryUsers, 0);
+      const prev = withNew.reduce((a, p) => a + p.previous.entryUsers, 0);
+      const pct = pctChange(cur, prev);
+      if (pct != null && Math.abs(pct) >= 5) out.push({
+        metric: "entryTotal", tone: pct > 0 ? "up" : "down", score: Math.abs(pct) * 1.3,
+        html: `Всего New Users по программам с целью в онбординге <b>${signedPct(pct)}</b>: ${nf0.format(prev)} → ${nf0.format(cur)}`,
+      });
+    }
+
+    // Health score leader and the weakest program, with the component that holds it back.
+    const scored = programs.map((p) => ({ p, h: health(p.current) })).filter((x) => x.h);
+    if (scored.length >= 2) {
+      scored.sort((a, b) => b.h.score - a.h.score);
+      const top = scored[0], low = scored[scored.length - 1];
+      out.push({ metric: "health", tone: "info", score: 6,
+        html: `Лидер по Health score — ${name(top.p)} (${top.h.score})` });
+      const weakest = low.h.parts.reduce((a, b) => (b.value < a.value ? b : a));
+      out.push({ metric: "health", tone: "info", score: 5,
+        html: `Слабее всего — ${name(low.p)} (${low.h.score}); тянет вниз ${weakest.label} (${Math.round(weakest.value * 100)} из 100)` });
+    }
+
+    out.sort((a, b) => b.score - a.score);
+    const picked = [], perMetric = {};
+    for (const i of out) {
+      if ((perMetric[i.metric] || 0) >= 2) continue;
+      perMetric[i.metric] = (perMetric[i.metric] || 0) + 1;
+      picked.push(i);
+      if (picked.length === 5) break;
+    }
+    return picked;
+  }
+
+  function renderInsights(data) {
+    const items = buildInsights(data);
+    insightsEl.period.textContent = formatRange(data.range) + " vs " + formatRange(data.prevRange);
+    insightsEl.list.innerHTML = items.map((i) => `<li class="insight ${i.tone}">
+      <span class="insight-mark" aria-hidden="true">${i.tone === "up" ? "▲" : i.tone === "down" ? "▼" : "★"}</span>
+      <span>${i.html}</span></li>`).join("");
+    insightsEl.empty.hidden = items.length > 0;
+  }
+
+  insightsEl.list.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-trend]");
+    if (b) openTrend(b.dataset.trend, b.dataset.metric);
+  });
+
   async function load() {
     el.table.classList.add("loading");
     try {
@@ -646,6 +768,7 @@
       renderBadge(state.data);
       renderHead();
       renderBody();
+      renderInsights(state.data);
     } catch (e) {
       el.body.innerHTML = `<tr><td class="sticky" colspan="${COLUMNS.length + 1}"><span class="empty">Не удалось загрузить данные</span></td></tr>`;
       console.error(e);
@@ -910,15 +1033,15 @@
     }
   }
 
-  document.getElementById("chat-open").addEventListener("click", () => {
-    chat.panel.hidden = false;
-    document.getElementById("chat-open").hidden = true;
-    chat.input.focus();
-  });
-  document.getElementById("chat-close").addEventListener("click", () => {
-    chat.panel.hidden = true;
-    document.getElementById("chat-open").hidden = false;
-  });
+  const chatToggle = document.getElementById("chat-open");
+  function setChatOpen(open) {
+    chat.panel.hidden = !open;
+    chatToggle.textContent = open ? "Hide AI analyst" : "Ask AI analyst";
+    chatToggle.setAttribute("aria-expanded", String(open));
+    if (open) { chat.panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); chat.input.focus({ preventScroll: true }); }
+  }
+  chatToggle.addEventListener("click", () => setChatOpen(chat.panel.hidden));
+  document.getElementById("chat-close").addEventListener("click", () => setChatOpen(false));
   chat.form.addEventListener("submit", (e) => {
     e.preventDefault();
     const q = chat.input.value;
