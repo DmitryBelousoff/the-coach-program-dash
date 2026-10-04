@@ -23,14 +23,14 @@ const AIRTABLE_BASE = process.env.AIRTABLE_BASE || "app1k5mFTR9tmsZmO"; // (PROD
 const PROGRAM_FIELD = process.env.AIRTABLE_PROGRAM_FIELD || "Program";
 const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "headline";
 const LESSON_ID_FIELD = process.env.AIRTABLE_LESSON_ID_FIELD || "id"; // = lesson_id in Amplitude
-const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
+export const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
 
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
 
 // Onboarding goal (answer, as tracked) -> program id (slug of the Airtable Program).
 // English answers only for now.
 // Display names for program ids (slug of the Airtable Program code); others show the code.
-const DISPLAY_NAMES = {
+export const DISPLAY_NAMES = {
   "sex-skill-man": "Sex is a skill",
   "navigating-arguments-man": "Solving couple fights",
   "sexting-man": "A man's guide to sexting",
@@ -40,7 +40,7 @@ const DISPLAY_NAMES = {
   "overall-health": "Overall Health",
 };
 
-const ENTRY_GOALS = {
+export const ENTRY_GOALS = {
   "last-longer": "BEAT PREMATURE EJACULATION",
   "keep-it-hard": "BEAT ERECTILE DYSFUNCTION",
   "sex-skill-man": "IMPROVE SEX SKILLS",
@@ -53,18 +53,18 @@ const MAPPING_TTL_MS = 10 * 60 * 1000;
 
 // ---------- dates ----------
 
-function parseDate(s) {
+export function parseDate(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
   if (!m) return null;
   const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
   return isNaN(d) ? null : d;
 }
 
-function addDays(d, n) {
+export function addDays(d, n) {
   return new Date(d.getTime() + n * 86400000);
 }
 
-function iso(d) {
+export function iso(d) {
   return d.toISOString().slice(0, 10);
 }
 
@@ -148,14 +148,14 @@ async function resolveSchemas() {
 // Lesson ids in Amplitude events differ from the Airtable `id` column: the type prefix
 // is sometimes dropped ("lesson_x" -> "x") and video lessons get "_video" inserted
 // ("lesson_x_sqrt" -> "lesson_x_video_sqrt"). Both sides are compared by this key.
-function lessonKey(id) {
+export function lessonKey(id) {
   return String(id).trim().replace(/^(lesson|exercise)_/, "").replace(/_video(?=_|$)/, "");
 }
 
 // The mapping changes rarely; a warm function instance reuses it for a while.
 let mappingCache = null; // { at, value: Promise }
 
-function loadMapping() {
+export function loadMapping() {
   if (mappingCache && Date.now() - mappingCache.at < MAPPING_TTL_MS) return mappingCache.value;
   const value = fetchMapping();
   mappingCache = { at: Date.now(), value };
@@ -219,7 +219,7 @@ const FEMALE_PROGRAMS = new Set(["sex_skill_app"]);
 //  - men's programs only;
 //  - only headlines unique to one program: a lesson shared between programs can't
 //    be attributed from DailyPlanItemOpen.title, so it counts for none of them.
-function selectPrograms(all) {
+export function selectPrograms(all) {
   const excluded = [];
   const male = all.filter((p) => {
     const female = FEMALE_PROGRAMS.has(p.name) || FEMALE.test(p.name) || [...p.tables].some((t) => FEMALE.test(t));
@@ -253,7 +253,7 @@ function selectPrograms(all) {
 let amplitudeActive = 0;
 const amplitudeQueue = [];
 
-async function amplitudeFetch(url, auth) {
+export async function amplitudeFetch(url, auth) {
   if (amplitudeActive >= AMPLITUDE_CONCURRENCY) await new Promise((resolve) => amplitudeQueue.push(resolve));
   amplitudeActive++;
   try {
@@ -273,14 +273,14 @@ async function amplitudeFetch(url, auth) {
   }
 }
 
-function amplitudeAuth() {
+export function amplitudeAuth() {
   const key = process.env.AMPLITUDE_API_KEY, secret = process.env.AMPLITUDE_SECRET_KEY;
   if (!key || !secret) throw new Error("AMPLITUDE_API_KEY and AMPLITUDE_SECRET_KEY must be configured");
   return "Basic " + Buffer.from(`${key}:${secret}`).toString("base64");
 }
 
 // Amplitude event definitions per metric; null when the metric has no source for a program.
-function lessonOpen(p, extraFilters = []) {
+export function lessonOpen(p, extraFilters = []) {
   return {
     event_type: "DailyPlanItemOpen",
     filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.headlines] }, ...extraFilters],
@@ -288,7 +288,7 @@ function lessonOpen(p, extraFilters = []) {
 }
 
 // "First time" filter (Amplitude's historical count = 1, within a 365-day lookback).
-const FIRST_TIME = { group_type: "User", subprop_type: "nth_time_hack", subprop_key: "nth_time_performed", subprop_op: "is", subprop_value: ["1"] };
+export const FIRST_TIME = { group_type: "User", subprop_type: "nth_time_hack", subprop_key: "nth_time_performed", subprop_op: "is", subprop_value: ["1"] };
 
 // metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
 const METRICS = {
