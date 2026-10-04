@@ -39,7 +39,7 @@ const SYSTEM = `Ты — аналитик продукта The Coach (мужск
 
 ## Ограничения данных
 - Уроки с одинаковым headline/lesson_id в нескольких программах не учитываются ни в одной (нельзя понять, из какой программы открыт урок). Сильнее всего это занижает Keep it hard, Kegel Challenge и пары версий Sex is a skill.
-- Женские программы (for her и т. п.) исключены. Кегель-тренировки (KegelTrainingOpen) и испанские заголовки пока не учитываются.
+- Женские программы (for her, sex_skill_app и т. п.) исключены. Кегель-тренировки (KegelTrainingOpen) и испанские заголовки пока не учитываются.
 
 ## Программы (id → название)
 last-longer → Last longer; keep-it-hard → Keep it hard; sex-skill-man → Sex is a skill; overall-health → Overall Health; sexting-man → A man's guide to sexting; navigating-arguments-man → Solving couple fights; kegel-only → Kegel Challenge. Остальные показываются кодом из Airtable.`;

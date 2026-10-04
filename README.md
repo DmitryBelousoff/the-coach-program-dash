@@ -32,7 +32,7 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 
 Правила отбора (`selectPrograms` в `api/metrics.js`):
 - Headline → Program собирается из всех таблиц базы, где есть колонки `headline` и `Program`; версии программ (`sex_skill`, `sex_skill_man`, `sex_skill_app`…) показываются отдельно.
-- Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`.
+- Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`; плюс явный список женских программ `FEMALE_PROGRAMS` (сейчас `sex_skill_app`).
 - Headline, который встречается в нескольких мужских программах, не учитывается ни в одной — по `title` нельзя понять, из какой программы открыт урок.
 - Программы без пользователей в текущем и предыдущем периоде скрываются.
 - Кегель (`KegelTrainingOpen`) и испанские заголовки пока не учитываются.

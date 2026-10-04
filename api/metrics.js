@@ -212,6 +212,8 @@ async function fetchMapping() {
 // The Amplitude project is the men's app, so programs for women are left out
 // (matched by program code or by the name of any table they come from).
 const FEMALE = /for_?her|woman|female|menopause/i;
+// Programs for women whose code or tables don't say so.
+const FEMALE_PROGRAMS = new Set(["sex_skill_app"]);
 
 // Which programs the dashboard shows, and with which headlines:
 //  - men's programs only;
@@ -220,7 +222,7 @@ const FEMALE = /for_?her|woman|female|menopause/i;
 function selectPrograms(all) {
   const excluded = [];
   const male = all.filter((p) => {
-    const female = FEMALE.test(p.name) || [...p.tables].some((t) => FEMALE.test(t));
+    const female = FEMALE_PROGRAMS.has(p.name) || FEMALE.test(p.name) || [...p.tables].some((t) => FEMALE.test(t));
     if (female) excluded.push({ name: p.name, reason: "for women" });
     return !female;
   });
