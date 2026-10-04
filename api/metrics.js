@@ -261,7 +261,15 @@ export async function amplitudeFetch(url, auth) {
     // (e.g. several dashboard loads at once): wait and retry a few times.
     for (let attempt = 0; ; attempt++) {
       const r = await fetch(url, { headers: { Authorization: auth } });
-      if (r.status !== 429 || attempt >= 3) return r;
+      if (r.status !== 429 || attempt >= 3) {
+        if (r.status === 429) {
+          // Surface Amplitude's explanation (concurrency vs hourly cost limit) in logs and errors.
+          const text = await r.text().catch(() => "");
+          console.error("Amplitude 429:", text.slice(0, 300));
+          return new Response(text, { status: 429, headers: { "x-amplitude-error": text.replace(/\s+/g, " ").slice(0, 200) } });
+        }
+        return r;
+      }
       const retryAfter = Number(r.headers.get("retry-after"));
       const waitMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 10000) : 1500 * 2 ** attempt;
       await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -345,7 +353,7 @@ async function fetchUniqueUsers(auth, event, range) {
   url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
   url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
   const r = await amplitudeFetch(url, auth);
-  if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+  if (!r.ok) throw new Error(`Amplitude request failed (${r.status})${r.headers.get("x-amplitude-error") ? ": " + r.headers.get("x-amplitude-error") : ""}`);
   const data = (await r.json()).data || {};
   // seriesCollapsed holds the de-duplicated total for the whole range.
   const collapsed = data.seriesCollapsed && data.seriesCollapsed[0] && data.seriesCollapsed[0][0];

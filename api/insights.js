@@ -54,7 +54,7 @@ async function segmentation(auth, event, range, { metric = "uniques", interval =
   url.searchParams.set("end", ymd(range.to));
   if (limit) url.searchParams.set("limit", String(limit));
   const r = await amplitudeFetch(url, auth);
-  if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+  if (!r.ok) throw new Error(`Amplitude request failed (${r.status})${r.headers.get("x-amplitude-error") ? ": " + r.headers.get("x-amplitude-error") : ""}`);
   return (await r.json()).data || {};
 }
 
@@ -88,7 +88,7 @@ async function weeklyReturn(auth, p, range, weeks) {
   url.searchParams.set("start", ymd(range.from));
   url.searchParams.set("end", ymd(range.to));
   const r = await amplitudeFetch(url, auth);
-  if (!r.ok) throw new Error(`Amplitude retention request failed (${r.status})`);
+  if (!r.ok) throw new Error(`Amplitude retention request failed (${r.status})${r.headers.get("x-amplitude-error") ? ": " + r.headers.get("x-amplitude-error") : ""}`);
   const data = (await r.json()).data || {};
   const values = (data.series && data.series[0] && data.series[0].values) || {};
   const acc = weeks.map(() => ({ returned: 0, cohort: 0 }));
