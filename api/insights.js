@@ -230,6 +230,8 @@ const METRICS = {
   newUsers: { label: "New Users", fmt: fmtInt, minLevel: 50, dashboardKey: "entryUsers" },
   returnRate: { label: "Return Rate", fmt: (v) => fmtPct(v), dashboardKey: "returnRate" },
   rating: { label: "User Satisfaction", fmt: (v) => fmtNum(v), dashboardKey: "rating" },
+  // Active Users per New User: cancels out traffic swings and shows how the program is used.
+  ratio: { label: "Active to New Ratio", fmt: (v) => fmtNum(v) + "×", dashboardKey: "pullRatio" },
 };
 
 // Masks values with too little data behind them (small cohorts / few ratings).
@@ -238,11 +240,21 @@ function reliable(p, metric) {
   if (!s) return null;
   if (metric === "returnRate") return s.map((v, i) => (p.returnCohort[i] >= 100 ? v : null));
   if (metric === "rating") return s.map((v, i) => (p.ratingCount[i] >= 30 ? v : null));
+  if (metric === "ratio") return s.map((v, i) => (p.newUsers[i] >= 50 ? v : null));
   return s;
 }
 
+const MAX_INSIGHTS = 7;
+const BASE_INSIGHTS = 6;
+const MIN_POSITIVE = 2;
+
 function detect(history) {
-  const { weeks, programs } = history;
+  const { weeks } = history;
+  // Derived weekly series (copies: the history object is cached between requests).
+  const programs = history.programs.map((p) => ({
+    ...p,
+    ratio: p.newUsers ? p.active.map((a, i) => (p.newUsers[i] ? a / p.newUsers[i] : null)) : null,
+  }));
   const last = weeks.length - 1;
   const out = [];
   const add = (c) => out.push(c);
@@ -403,7 +415,7 @@ function detect(history) {
     const sameDir = actChange.filter((x) => Math.sign(x.ch) === Math.sign(med)).length;
     if (sameDir === actChange.length && Math.abs(med) >= 6) add({
       type: "Сравнение", tone: med > 0 ? "up" : "down", metric: "totalUsers",
-      score: 4 + Math.min(Math.abs(med), 30) / 10,
+      score: 6.5 + Math.min(Math.abs(med), 30) / 10,
       title: `Active Users ${med > 0 ? "растут" : "снижаются"} во всех ${actChange.length} крупных программах сразу`,
       detail: `За 4 недели медиана ${signed(med)}: изменение общее, вероятнее внешняя причина (трафик, сезон, релиз), а не контент отдельных программ.`,
     });
@@ -441,6 +453,97 @@ function detect(history) {
     }
   }
 
+  // 7. Traffic vs usage: Active to New Ratio tells whether an audience change comes from
+  //    the influx (ratio steady) or from how the program is used (ratio moves).
+  for (const p of programs) {
+    if (!p.ratio) continue;
+    const r = reliable(p, "ratio");
+    const a4 = clean(p.active.slice(-4)), a4p = clean(p.active.slice(-8, -4));
+    const r4 = clean(r.slice(-4)), r4p = clean(r.slice(-8, -4));
+    const n4 = clean(p.newUsers.slice(-4)), n4p = clean(p.newUsers.slice(-8, -4));
+    if (a4.length < 3 || a4p.length < 3 || r4.length < 3 || r4p.length < 3) continue;
+    const dA = (mean(a4) - mean(a4p)) / mean(a4p) * 100;
+    const dR = (mean(r4) - mean(r4p)) / mean(r4p) * 100;
+    const dN = (mean(n4) - mean(n4p)) / mean(n4p) * 100;
+    const ratioTxt = `Active to New Ratio ${fmtNum(mean(r4p))}× → ${fmtNum(mean(r4))}×`;
+    if (dA <= -6 && dR >= -3) add({
+      type: "Использование", tone: "up", program: p.id, metric: "pullRatio",
+      score: 5.5 + Math.min(Math.abs(dA), 25) / 6,
+      title: `${p.name}: аудитория снизилась из-за притока, а не из-за программы`,
+      detail: `Последние 4 недели к предыдущим 4: Active Users ${signed(dA)}, New Users ${signed(dN)}, а ${ratioTxt} — пришедшие пользуются программой не хуже прежнего.`,
+    });
+    else if (dA >= 6 && dR <= -5) add({
+      type: "Использование", tone: "down", program: p.id, metric: "pullRatio",
+      score: 5.5 + Math.min(Math.abs(dR), 25) / 6,
+      title: `${p.name}: рост аудитории держится только на трафике`,
+      detail: `Active Users ${signed(dA)}, но ${ratioTxt} (${signed(dR)}): на одного пришедшего приходится меньше активных, чем раньше.`,
+    });
+    else if (Math.abs(dR) >= 8) add({
+      type: "Использование", tone: dR > 0 ? "up" : "down", program: p.id, metric: "pullRatio",
+      score: 4.5 + Math.min(Math.abs(dR), 30) / 6,
+      title: `${p.name}: ${dR > 0 ? "программой пользуются активнее" : "программой пользуются слабее"} независимо от трафика`,
+      detail: `${ratioTxt} (${signed(dR)}) за последние 4 недели к предыдущим 4 при New Users ${signed(dN)}.`,
+    });
+  }
+
+  // 8. Ratio leader: the program that reaches the most users per new user.
+  const ratios = programs
+    .filter((p) => p.ratio)
+    .map((p) => ({ p, v: clean(reliable(p, "ratio").slice(-4)) }))
+    .filter((x) => x.v.length >= 3)
+    .map((x) => ({ ...x, m: mean(x.v) }))
+    .sort((a, b) => b.m - a.m);
+  if (ratios.length >= 3) {
+    const [lead, second] = ratios;
+    add({
+      type: "Использование", tone: "up", program: lead.p.id, metric: "pullRatio",
+      score: 3 + Math.min(lead.m / second.m, 3),
+      title: `${lead.p.name} собирает больше всего аудитории на одного нового пользователя`,
+      detail: `Active to New Ratio ${fmtNum(lead.m)}× за последние 4 недели против ${fmtNum(second.m)}× у ${second.p.name}: программой пользуются далеко за пределами тех, кто выбрал её цель в онбординге.`,
+    });
+  }
+
+  // 9. Positive signals that are easy to miss when most numbers go down.
+  //    a) Long-run growth: last 4 weeks vs first 4 weeks of the window.
+  for (const p of programs) {
+    const first = clean(p.active.slice(0, 4)), lastFour = clean(p.active.slice(-4));
+    // Only programs live for the whole window (a launch inside it isn't "growth").
+    if (first.length < 4 || lastFour.length < 4 || Math.min(...first) < 100) continue;
+    const g = (mean(lastFour) - mean(first)) / mean(first) * 100;
+    if (g >= 12) add({
+      type: "Рост", tone: "up", program: p.id, metric: "totalUsers",
+      score: 3 + Math.min(g, 50) / 10,
+      title: `${p.name}: аудитория за 12 недель выросла на ${Math.round(g)}%`,
+      detail: `В среднем ${fmtInt(mean(first))} активных в неделю в начале периода и ${fmtInt(mean(lastFour))} в последние 4 недели${clean(p.active.slice(-4, -1)).length ? " — даже с учётом последних недель спада" : ""}.`,
+    });
+  }
+  //    b) Most stable Return Rate among the programs that retain at least as well as the median.
+  const stab = programs
+    .map((p) => ({ p, v: clean(reliable(p, "returnRate")) }))
+    .filter((x) => x.v.length >= 8)
+    .map((x) => ({ ...x, m: mean(x.v), cv: sd(x.v) / mean(x.v) }));
+  if (stab.length >= 3) {
+    const medRet = [...stab].map((x) => x.m).sort((a, b) => a - b)[Math.floor(stab.length / 2)];
+    const best = stab.filter((x) => x.m >= medRet).sort((a, b) => a.cv - b.cv)[0];
+    if (best && best.cv <= 0.06) add({
+      type: "Устойчивость", tone: "up", program: best.p.id, metric: "returnRate",
+      score: 3.5,
+      title: `${best.p.name}: самый устойчивый Return Rate`,
+      detail: `${weeksWord(best.v.length)} подряд ${fmtPct(Math.min(...best.v))}–${fmtPct(Math.max(...best.v))} (в среднем ${fmtPct(best.m)}): привычка возвращаться не зависит от колебаний трафика.`,
+    });
+  }
+  //    c) In a shared decline: who held up best.
+  if (actChange.length >= 4) {
+    const med = [...actChange].map((x) => x.ch).sort((a, b) => a - b)[Math.floor(actChange.length / 2)];
+    const best = [...actChange].sort((a, b) => b.ch - a.ch)[0];
+    if (med < -6 && best.ch - med >= 5) add({
+      type: "Устойчивость", tone: "up", program: best.p.id, metric: "totalUsers",
+      score: 3 + Math.min(best.ch - med, 20) / 5,
+      title: `${best.p.name} держится лучше остальных на общем спаде`,
+      detail: `Active Users за 4 недели ${signed(best.ch)} при медиане по программам ${signed(med)}.`,
+    });
+  }
+
   // When every program moved the same way, single-program volume anomalies in that
   // direction are the same story — keep the shared insight on top, demote the rest.
   const shared = out.find((c) => c.type === "Сравнение" && !c.program);
@@ -449,22 +552,42 @@ function detect(history) {
   }
 
   // Highest first, spread across programs and types: first pass takes one insight per
-  // program (and at most two per type), the second fills up to five with at most two
-  // per program; never two of the same type for one program.
+  // program (and at most two per type), the second fills up to BASE_INSIGHTS with at
+  // most two per program; never two of the same type for one program. Then make sure
+  // the picture is complete: at least one Active to New Ratio insight and MIN_POSITIVE
+  // positive ones, adding up to MAX_INSIGHTS (or replacing the weakest pick).
   out.sort((a, b) => b.score - a.score);
   const picked = [], perProgram = {}, perType = {}, seen = new Set();
-  const take = (maxPerProgram) => {
-    for (const c of out) {
-      if (picked.length === 5) return;
-      const prog = c.program || "*", key = `${prog}|${c.type}`;
-      if (picked.includes(c) || seen.has(key) || (perType[c.type] || 0) >= 2 || (perProgram[prog] || 0) >= maxPerProgram) continue;
-      picked.push(c); seen.add(key);
-      perType[c.type] = (perType[c.type] || 0) + 1;
-      perProgram[prog] = (perProgram[prog] || 0) + 1;
+  const ok = (c, maxPerProgram) => {
+    const prog = c.program || "*";
+    return !picked.includes(c) && !seen.has(`${prog}|${c.type}`) && (perType[c.type] || 0) < 2 && (perProgram[prog] || 0) < maxPerProgram;
+  };
+  const push = (c) => {
+    const prog = c.program || "*";
+    picked.push(c); seen.add(`${prog}|${c.type}`);
+    perType[c.type] = (perType[c.type] || 0) + 1;
+    perProgram[prog] = (perProgram[prog] || 0) + 1;
+  };
+  const take = (maxPerProgram, limit) => { for (const c of out) { if (picked.length >= limit) return; if (ok(c, maxPerProgram)) push(c); } };
+  take(1, BASE_INSIGHTS);
+  take(2, BASE_INSIGHTS);
+
+  const ensure = (want, test) => {
+    while (picked.filter(test).length < want) {
+      const c = out.find((x) => test(x) && !picked.includes(x) && ok(x, 2)) || out.find((x) => test(x) && !picked.includes(x));
+      if (!c) return;
+      if (picked.length >= MAX_INSIGHTS) {
+        // Replace the weakest pick that isn't itself needed.
+        const weakest = [...picked].reverse().find((x) => !test(x) && x.metric !== "pullRatio" && x.tone !== "up");
+        if (!weakest) return;
+        picked.splice(picked.indexOf(weakest), 1);
+      }
+      push(c);
     }
   };
-  take(1);
-  take(2);
+  ensure(1, (c) => c.metric === "pullRatio");
+  ensure(MIN_POSITIVE, (c) => c.tone === "up");
+  picked.sort((a, b) => b.score - a.score);
   return { candidates: out, top: picked };
 }
 
@@ -493,12 +616,12 @@ const INSIGHT_SCHEMA = {
 
 async function phraseWithClaude(history, candidates) {
   const client = new Anthropic();
-  const shortlist = candidates.slice(0, 15);
+  const shortlist = candidates.slice(0, 20);
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 16000,
     output_config: { effort: "medium", format: jsonSchemaOutputFormat(INSIGHT_SCHEMA) },
-    system: "Ты продуктовый аналитик приложения The Coach. Из кандидатов-закономерностей выбери 3–5 самых полезных для продакт-менеджера: неочевидных по таблице дашборда, с выводом или гипотезой, что делать. Не пересказывай простую динамику неделя к неделе. Используй только цифры из данных. Пиши по-русски: title — одна короткая фраза, detail — 1–2 предложения с цифрами.",
+    system: "Ты продуктовый аналитик приложения The Coach. Из кандидатов-закономерностей выбери 5–7 самых полезных для продакт-менеджера: неочевидных по таблице дашборда, с выводом или гипотезой, что делать. Обязательно хотя бы один про Active to New Ratio (он нивелирует скачки трафика и показывает, как пользуются программой) и минимум два позитивных. Не пересказывай простую динамику неделя к неделе. Используй только цифры из данных. Пиши по-русски: title — одна короткая фраза, detail — 1–2 предложения с цифрами.",
     messages: [{
       role: "user",
       content: `Недели (понедельники): ${history.weeks.join(", ")}\n\nДанные по программам (по неделям):\n${JSON.stringify(history.programs)}\n\nКандидаты:\n${shortlist.map((c, i) => `${i}. [${c.type}] ${c.title} — ${c.detail}`).join("\n")}`,
@@ -507,7 +630,7 @@ async function phraseWithClaude(history, candidates) {
   if (response.stop_reason === "refusal" || !response.parsed_output) return null;
   return response.parsed_output.insights
     .filter((i) => shortlist[i.candidate])
-    .slice(0, 5)
+    .slice(0, 7)
     .map((i) => ({ ...shortlist[i.candidate], title: i.title, detail: i.detail }));
 }
 
