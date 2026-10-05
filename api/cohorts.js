@@ -1,19 +1,19 @@
-// Cohort metrics that need 60 days to mature: Completion Rate and Catalog Pull.
+// Cohort metrics that need time to mature: Completion Rate (60 days) and Catalog Pull (14 days).
 //
 //   GET /api/cohorts?period=week|month|quarter&date=YYYY-MM-DD
-//     -> { cohort: { from, to }, windowDays: 60, metrics: [...], programs: [{ id, current: {...}, notes: {...} }] }
+//     -> { cohort, windowDays: 60, catalogCohort, catalogWindowDays: 14, metrics: [...], programs: [{ id, current, notes }] }
 //   GET /api/cohorts?...&debug=funnel&program=<id>   -> raw Amplitude funnel response (contract check)
 //
-// Both follow users for 60 days, so the cohort is the selected period shifted 60 days
-// back: everyone in it has had the full 60 days. A cohort under MIN_COHORT users (e.g. a
-// program released less than 60 days ago) gets the note "not enough data".
+// Each metric follows users for its window, so its cohort is the selected period shifted
+// back by that window: everyone in it has had the full window. A cohort under MIN_COHORT
+// users (e.g. a program released recently) gets the note "not enough data".
 //
 // Completion Rate: of users who opened their first lesson of the program in the cohort
 //   window, the share who completed (LessonComplete) a lesson of the program's last day
 //   (Airtable `program day`) within 60 days.
 // Catalog Pull: of users who picked the program's goal in onboarding in the cohort window,
 //   the average number of OTHER programs they started (≥1 DailyPlanItemOpen of that
-//   program) within 60 days = Σ over other programs of the share who started it.
+//   program) within 14 days = Σ over other programs of the share who started it.
 
 import {
   AMPLITUDE_HOST, DISPLAY_NAMES, ENTRY_GOALS, FIRST_TIME,
@@ -22,7 +22,8 @@ import {
 
 export const config = { maxDuration: 60 };
 
-const WINDOW_DAYS = 60;
+const WINDOW_DAYS = 60;         // Completion Rate
+const CATALOG_WINDOW_DAYS = 14; // Catalog Pull
 const MIN_COHORT = 30;
 const MIN_TARGET_USERS = 30; // other programs smaller than this are ignored for Catalog Pull
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
@@ -31,8 +32,8 @@ const NOT_ENOUGH = "not enough data";
 const ymd = (d) => iso(d).replace(/-/g, "");
 
 // Ordered 2-step funnel, users counted in the first step's date range, converting
-// within WINDOW_DAYS. -> { entered, converted }
-async function funnel(auth, step1, step2, range) {
+// within windowDays. -> { entered, converted }
+async function funnel(auth, step1, step2, range, windowDays) {
   const url = new URL(`${AMPLITUDE_HOST}/api/2/funnels`);
   url.searchParams.append("e", JSON.stringify(step1));
   url.searchParams.append("e", JSON.stringify(step2));
@@ -40,7 +41,7 @@ async function funnel(auth, step1, step2, range) {
   url.searchParams.set("end", ymd(range.to));
   url.searchParams.set("mode", "ordered");
   url.searchParams.set("n", "active");
-  url.searchParams.set("cs", String(WINDOW_DAYS * 86400));
+  url.searchParams.set("cs", String(windowDays * 86400));
   url.searchParams.set("nthTimeLookbackWindow", "365");
   const r = await amplitudeFetch(url, auth);
   if (!r.ok) throw new Error(`Amplitude funnel request failed (${r.status})${r.headers.get("x-amplitude-error") ? ": " + r.headers.get("x-amplitude-error") : ""}`);
@@ -81,6 +82,9 @@ async function compute(period, date) {
   const cohortTo = addDays(date, -WINDOW_DAYS);
   const cohort = { from: addDays(cohortTo, -days + 1), to: cohortTo };
   const followUp = { from: cohort.from, to: date }; // cohort + its 60 days
+  const catalogTo = addDays(date, -CATALOG_WINDOW_DAYS);
+  const catalogCohort = { from: addDays(catalogTo, -days + 1), to: catalogTo };
+  const catalogFollowUp = { from: catalogCohort.from, to: date };
 
   // Exact lesson ids of LessonComplete events (they differ from Airtable ids by prefix/_video).
   const lessonIds = await totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", followUp);
@@ -89,7 +93,7 @@ async function compute(period, date) {
   // Programs active enough to count as "started" targets for Catalog Pull.
   const targets = [];
   await Promise.all(programs.map(async (p) => {
-    if ((await uniques(auth, lessonOpen(p), followUp)) >= MIN_TARGET_USERS) targets.push(p);
+    if ((await uniques(auth, lessonOpen(p), catalogFollowUp)) >= MIN_TARGET_USERS) targets.push(p);
   }));
 
   const rows = await Promise.all(programs.map(async (p) => {
@@ -102,7 +106,7 @@ async function compute(period, date) {
       const f = await funnel(auth, lessonOpen(p, [FIRST_TIME]), {
         event_type: "LessonComplete",
         filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: finals }],
-      }, cohort);
+      }, cohort, WINDOW_DAYS);
       if (f.entered >= MIN_COHORT) current.completionRate = f.converted / f.entered;
       else notes.completionRate = NOT_ENOUGH;
       current.completionCohort = f.entered;
@@ -114,7 +118,7 @@ async function compute(period, date) {
     // Catalog Pull (only programs with an onboarding goal)
     if (ENTRY_GOALS[p.id]) {
       const others = targets.filter((t) => t.id !== p.id);
-      const results = await Promise.all(others.map((t) => funnel(auth, goalEvent(p.id), lessonOpen(t), cohort)));
+      const results = await Promise.all(others.map((t) => funnel(auth, goalEvent(p.id), lessonOpen(t), catalogCohort, CATALOG_WINDOW_DAYS)));
       const entered = Math.max(0, ...results.map((x) => x.entered));
       if (entered >= MIN_COHORT) {
         current.catalogPull = results.reduce((a, x) => a + (x.entered ? x.converted / x.entered : 0), 0);
@@ -129,6 +133,8 @@ async function compute(period, date) {
   return {
     cohort: { from: iso(cohort.from), to: iso(cohort.to) },
     windowDays: WINDOW_DAYS,
+    catalogCohort: { from: iso(catalogCohort.from), to: iso(catalogCohort.to) },
+    catalogWindowDays: CATALOG_WINDOW_DAYS,
     metrics: ["completionRate", "catalogPull"],
     programs: rows,
   };
@@ -148,7 +154,7 @@ export default async function handler(req, res) {
     if (req.query.debug === "funnel") {
       const { programs } = selectPrograms((await loadMapping()).programs);
       const p = programs.find((x) => x.id === String(req.query.program || "last-longer"));
-      const cohortTo = addDays(date, -WINDOW_DAYS);
+      const cohortTo = addDays(date, -CATALOG_WINDOW_DAYS);
       const url = new URL(`${AMPLITUDE_HOST}/api/2/funnels`);
       url.searchParams.append("e", JSON.stringify(goalEvent(p.id)));
       url.searchParams.append("e", JSON.stringify(lessonOpen(p)));
@@ -156,7 +162,7 @@ export default async function handler(req, res) {
       url.searchParams.set("end", ymd(cohortTo));
       url.searchParams.set("mode", "ordered");
       url.searchParams.set("n", "active");
-      url.searchParams.set("cs", String(WINDOW_DAYS * 86400));
+      url.searchParams.set("cs", String(CATALOG_WINDOW_DAYS * 86400));
       const r = await amplitudeFetch(url, amplitudeAuth());
       res.setHeader("Cache-Control", "no-store");
       res.status(r.status).send(await r.text());

@@ -349,6 +349,22 @@ export function lessonOpen(p, extraFilters = []) {
 // "First time" filter (Amplitude's historical count = 1, within a 365-day lookback).
 export const FIRST_TIME = { group_type: "User", subprop_type: "nth_time_hack", subprop_key: "nth_time_performed", subprop_op: "is", subprop_value: ["1"] };
 
+// Events that count as engagement for Share of Engagement.
+const ENGAGEMENT_EVENTS = ["LessonOpen", "LessonComplete", "DailyPlanItemOpen", "KegelTrainingStart"];
+
+// Kegel workouts aren't in Airtable; their workout_id encodes the program:
+// workout_<n>_pe / workout_custom_*_pe_* -> Last longer, *_kegel_only -> Kegel Challenge,
+// plain workout_<n> -> Keep it hard (ED). Anything else (e.g. workout_custom_retain) stays unattributed.
+export function kegelProgram(workoutId) {
+  if (/_kegel_only(_|$)/.test(workoutId)) return "kegel-only";
+  if (/_pe(_|$)/.test(workoutId)) return "last-longer";
+  if (/^workout_\d+$/.test(workoutId)) return "keep-it-hard";
+  return null;
+}
+
+// Metrics without a previous-period comparison in the table.
+const NO_PREVIOUS = new Set(["shareOfEngagement"]);
+
 // metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
 const METRICS = {
   totalUsers: (p) => (auth, range) => uniqueUsers(auth, lessonOpen(p), range),
@@ -376,17 +392,24 @@ const METRICS = {
   ratingCount: (p) => p.lessonIds.size
     ? async (auth, range) => { const byLesson = await ratingsByLesson(auth, range); let n = 0; for (const id of p.lessonIds) n += (byLesson.get(id) || { n: 0 }).n; return n; }
     : null,
-  // Share of Engagement: the program's share of all completed lessons/exercises in the app
-  // (LessonComplete by lesson_id; denominator = every LessonComplete in the period).
-  shareOfEngagement: (p) => p.lessonIds.size
-    ? async (auth, range) => {
-        const [byLesson, total] = await Promise.all([
-          totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", range),
-          eventTotal(auth, { event_type: "LessonComplete", filters: [] }, range),
-        ]);
-        return total ? sumForLessons(byLesson, p) / total : null;
-      }
-    : null,
+  // Share of Engagement: the program's share of all engagement events in the app —
+  // LessonOpen + LessonComplete (by lesson_id), DailyPlanItemOpen (by title = headline)
+  // and KegelTrainingStart (by workout_id, see kegelProgram). Denominator = every event of
+  // these four types in the period, including ones no program can be attributed to.
+  shareOfEngagement: (p) => async (auth, range) => {
+    const [opens, completes, kegel, planOpens, total] = await Promise.all([
+      p.lessonIds.size ? totalsBy(auth, { event_type: "LessonOpen", filters: [] }, "lesson_id", range) : new Map(),
+      p.lessonIds.size ? totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", range) : new Map(),
+      totalsBy(auth, { event_type: "KegelTrainingStart", filters: [] }, "workout_id", range),
+      totalsBy(auth, { event_type: "DailyPlanItemOpen", filters: [] }, "title", range),
+      Promise.all(ENGAGEMENT_EVENTS.map((e) => eventTotal(auth, { event_type: e, filters: [] }, range))).then((xs) => xs.reduce((a, x) => a + x, 0)),
+    ]);
+    let planOwn = 0, kegelOwn = 0;
+    for (const h of p.headlines) planOwn += planOpens.rawCounts.get(h) || 0;
+    for (const [workoutId, n] of kegel.rawCounts) if (kegelProgram(workoutId) === p.id) kegelOwn += n;
+    const own = sumForLessons(opens, p) + sumForLessons(completes, p) + planOwn + kegelOwn;
+    return total ? own / total : null;
+  },
   // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
   shares: (p) => p.lessonIds.size
     ? async (auth, range) => sumForLessons(await totalsBy(auth, { event_type: "SharingVideoSent", filters: [] }, "lessonId", range), p)
@@ -444,12 +467,14 @@ export function totalsBy(auth, event, groupProp, range) {
     const data = (await r.json()).data || {};
     const out = new Map();
     out.raw = new Map(); // lessonKey -> Set of the exact lesson ids seen in events
+    out.rawCounts = new Map(); // exact id -> count
     (data.seriesLabels || []).forEach((label, i) => {
       const rawId = String(Array.isArray(label) ? label[label.length - 1] : label);
       const v = lessonKey(rawId);
       if (!out.raw.has(v)) out.raw.set(v, new Set());
       out.raw.get(v).add(rawId);
       const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
+      out.rawCounts.set(rawId, (out.rawCounts.get(rawId) || 0) + (cell ? cell.value : 0));
       out.set(v, (out.get(v) || 0) + (cell ? cell.value : 0));
     });
     return out;
@@ -700,7 +725,7 @@ export default async function handler(req, res) {
         rows[i].current[metric] = rows[i].previous[metric] = null;
         if (!compute) continue;
         tasks.push(async () => { rows[i].current[metric] = await compute(auth, range); });
-        tasks.push(async () => { rows[i].previous[metric] = await compute(auth, prevRange); });
+        if (!NO_PREVIOUS.has(metric)) tasks.push(async () => { rows[i].previous[metric] = await compute(auth, prevRange); });
       }
     });
     await pool(tasks, AMPLITUDE_CONCURRENCY);
