@@ -202,6 +202,27 @@ async function fetchMapping() {
       }
     }
     st.lastDay = Object.fromEntries(lastDay);
+    // Plan items that mark reaching the end of the program in this table: headlines of the
+    // last day (and, as a fallback, of the day before it) that don't appear on earlier days.
+    const daysOf = new Map(); // program name -> headline -> Set of days
+    for (const rec of records) {
+      const d = dayOf(rec);
+      if (d == null) continue;
+      const hs = fieldValues(rec.fields[schema.headline]).map((x) => x.trim()).filter(Boolean);
+      for (const v of fieldValues(rec.fields[schema.program])) {
+        const n = ((linkNames && linkNames.get(v)) || v).trim();
+        if (!daysOf.has(n)) daysOf.set(n, new Map());
+        for (const h of hs) {
+          if (!daysOf.get(n).has(h)) daysOf.get(n).set(h, new Set());
+          daysOf.get(n).get(h).add(d);
+        }
+      }
+    }
+    const endHeadlines = (name, day) => {
+      const out = new Set();
+      for (const [h, ds] of daysOf.get(name) || []) if (ds.has(day) && Math.min(...ds) === day) out.add(h);
+      return out;
+    };
     for (const rec of records) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
@@ -213,8 +234,14 @@ async function fetchMapping() {
       if (!names.length) st.noProgram++;
       for (const name of names) {
         const id = slug(name);
-        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), finalLessonIds: new Set(), tables: new Set(), days: 0 });
-        if (lastDay.has(name)) programs.get(id).days = Math.max(programs.get(id).days, lastDay.get(name));
+        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), finalLessonIds: new Set(), finalHeadlines: new Set(), penultimateHeadlines: new Set(), tables: new Set(), days: 0 });
+        if (lastDay.has(name) && !programs.get(id).tables.has(schema.name)) {
+          const pr = programs.get(id), last = lastDay.get(name);
+          pr.days = Math.max(pr.days, last);
+          endHeadlines(name, last).forEach((h) => pr.finalHeadlines.add(h));
+          const before = Math.max(-Infinity, ...[...(daysOf.get(name) || new Map()).values()].flatMap((ds) => [...ds]).filter((x) => x < last));
+          if (Number.isFinite(before)) endHeadlines(name, before).forEach((h) => pr.penultimateHeadlines.add(h));
+        }
         headlines.forEach((h) => programs.get(id).headlines.add(h));
         lessonIds.forEach((l) => programs.get(id).lessonIds.add(l));
         const d = dayOf(rec);
@@ -265,6 +292,14 @@ export function selectPrograms(all) {
     programs.push({
       ...p, headlines: unique, lessonIds,
       finalLessonIds: new Set([...p.finalLessonIds].filter((l) => lessonIds.has(l))),
+      // Completion: last-day plan items unique to this program; if none, the day before.
+      ...(() => {
+        const final = [...p.finalHeadlines].filter((h) => unique.has(h));
+        const penult = [...p.penultimateHeadlines].filter((h) => unique.has(h));
+        return final.length
+          ? { endHeadlines: new Set(final), endDay: "last" }
+          : penult.length ? { endHeadlines: new Set(penult), endDay: "penultimate" } : { endHeadlines: new Set(), endDay: null };
+      })(),
       sharedDropped: p.headlines.size - unique.size,
     });
   }
@@ -612,7 +647,7 @@ export default async function handler(req, res) {
           id: p.id, name: p.name, tables: [...p.tables],
           headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
           lessonIds: p.lessonIds.size, lessonIdSample: [...p.lessonIds].slice(0, 5),
-          finalLessonIds: [...p.finalLessonIds], days: p.days,
+          finalLessonIds: [...p.finalLessonIds], days: p.days, endDay: p.endDay, endHeadlines: [...p.endHeadlines],
         })),
         excluded,
         // Headlines in more than one men's program; not counted for any of them.

@@ -11,15 +11,17 @@
 // users (e.g. a program released recently) gets the note "not enough data".
 //
 // Completion Rate: of users who opened their first lesson of the program in the cohort
-//   window, the share who completed (LessonComplete) a lesson of the program's last day
-//   (Airtable `program day`) within the program's length + 50% (ceil(days × 1.5)).
+//   window, the share who opened (DailyPlanItemOpen) a plan item of the program's last day
+//   (Airtable `program day`; only items first appearing on that day and unique to the
+//   program; if there are none, the day before) within the program's length + 50%
+//   (ceil(days × 1.5)).
 // Catalog Pull: of users who picked the program's goal in onboarding in the cohort window,
 //   the average number of OTHER programs they started (≥1 DailyPlanItemOpen of that
 //   program) within 14 days = Σ over other programs of the share who started it.
 
 import {
   AMPLITUDE_HOST, DISPLAY_NAMES, ENTRY_GOALS, FIRST_TIME,
-  addDays, amplitudeAuth, amplitudeFetch, iso, lessonOpen, loadMapping, parseDate, selectPrograms, totalsBy,
+  addDays, amplitudeAuth, amplitudeFetch, iso, lessonOpen, loadMapping, parseDate, selectPrograms,
 } from "./metrics.js";
 
 export const config = { maxDuration: 60 };
@@ -87,15 +89,9 @@ async function compute(period, date) {
     const to = addDays(date, -windowDays);
     return { from: addDays(to, -days + 1), to };
   };
-  const maxWindow = Math.max(CATALOG_WINDOW_DAYS, ...programs.map(completionWindow));
-  const followUp = { from: cohortFor(maxWindow).from, to: date }; // the longest cohort + its window
   const catalogTo = addDays(date, -CATALOG_WINDOW_DAYS);
   const catalogCohort = { from: addDays(catalogTo, -days + 1), to: catalogTo };
   const catalogFollowUp = { from: catalogCohort.from, to: date };
-
-  // Exact lesson ids of LessonComplete events (they differ from Airtable ids by prefix/_video).
-  const lessonIds = await totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", followUp);
-  const rawIds = (keys) => [...keys].flatMap((k) => [...(lessonIds.raw.get(k) || [])]);
 
   // Programs active enough to count as "started" targets for Catalog Pull.
   const targets = [];
@@ -108,22 +104,19 @@ async function compute(period, date) {
     const notes = {};
 
     // Completion Rate
-    const finals = rawIds(p.finalLessonIds);
     const windowDays = completionWindow(p);
     const cohort = cohortFor(windowDays);
-    const completion = { cohort: { from: iso(cohort.from), to: iso(cohort.to) }, windowDays, programDays: p.days };
-    if (finals.length && windowDays) {
+    const completion = { cohort: { from: iso(cohort.from), to: iso(cohort.to) }, windowDays, programDays: p.days, endDay: p.endDay };
+    if (p.endHeadlines.size && windowDays) {
       const f = await funnel(auth, lessonOpen(p, [FIRST_TIME]), {
-        event_type: "LessonComplete",
-        filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: finals }],
+        event_type: "DailyPlanItemOpen",
+        filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.endHeadlines] }],
       }, cohort, windowDays);
       if (f.entered >= MIN_COHORT) current.completionRate = f.converted / f.entered;
       else notes.completionRate = NOT_ENOUGH;
       current.completionCohort = f.entered;
       current.completionWindow = windowDays;
-    } else if (p.finalLessonIds.size) {
-      // Final lessons exist in Airtable but nobody completed any of them in the window.
-      notes.completionRate = NOT_ENOUGH;
+      current.completionEndDay = p.endDay;
     }
 
     // Catalog Pull (only programs with an onboarding goal)
