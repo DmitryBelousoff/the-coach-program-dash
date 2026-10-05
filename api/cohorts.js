@@ -1,7 +1,9 @@
-// Cohort metrics that need time to mature: Completion Rate (60 days) and Catalog Pull (14 days).
+// Cohort metrics that need time to mature: Completion Rate (program length + 50%) and
+// Catalog Pull (14 days).
 //
 //   GET /api/cohorts?period=week|month|quarter&date=YYYY-MM-DD
-//     -> { cohort, windowDays: 60, catalogCohort, catalogWindowDays: 14, metrics: [...], programs: [{ id, current, notes }] }
+//     -> { catalogCohort, catalogWindowDays: 14, metrics: [...],
+//          programs: [{ id, current, notes, completion: { cohort, windowDays, programDays } }] }
 //   GET /api/cohorts?...&debug=funnel&program=<id>   -> raw Amplitude funnel response (contract check)
 //
 // Each metric follows users for its window, so its cohort is the selected period shifted
@@ -10,7 +12,7 @@
 //
 // Completion Rate: of users who opened their first lesson of the program in the cohort
 //   window, the share who completed (LessonComplete) a lesson of the program's last day
-//   (Airtable `program day`) within 60 days.
+//   (Airtable `program day`) within the program's length + 50% (ceil(days × 1.5)).
 // Catalog Pull: of users who picked the program's goal in onboarding in the cohort window,
 //   the average number of OTHER programs they started (≥1 DailyPlanItemOpen of that
 //   program) within 14 days = Σ over other programs of the share who started it.
@@ -22,7 +24,7 @@ import {
 
 export const config = { maxDuration: 60 };
 
-const WINDOW_DAYS = 60;         // Completion Rate
+const COMPLETION_SLACK = 1.5;   // Completion Rate window = program days × 1.5
 const CATALOG_WINDOW_DAYS = 14; // Catalog Pull
 const MIN_COHORT = 30;
 const MIN_TARGET_USERS = 30; // other programs smaller than this are ignored for Catalog Pull
@@ -79,9 +81,14 @@ async function compute(period, date) {
   const auth = amplitudeAuth();
   const { programs } = selectPrograms((await loadMapping()).programs);
   const days = PERIOD_DAYS[period];
-  const cohortTo = addDays(date, -WINDOW_DAYS);
-  const cohort = { from: addDays(cohortTo, -days + 1), to: cohortTo };
-  const followUp = { from: cohort.from, to: date }; // cohort + its 60 days
+  // Completion: each program follows its cohort for its own window.
+  const completionWindow = (p) => Math.ceil(p.days * COMPLETION_SLACK);
+  const cohortFor = (windowDays) => {
+    const to = addDays(date, -windowDays);
+    return { from: addDays(to, -days + 1), to };
+  };
+  const maxWindow = Math.max(CATALOG_WINDOW_DAYS, ...programs.map(completionWindow));
+  const followUp = { from: cohortFor(maxWindow).from, to: date }; // the longest cohort + its window
   const catalogTo = addDays(date, -CATALOG_WINDOW_DAYS);
   const catalogCohort = { from: addDays(catalogTo, -days + 1), to: catalogTo };
   const catalogFollowUp = { from: catalogCohort.from, to: date };
@@ -102,14 +109,18 @@ async function compute(period, date) {
 
     // Completion Rate
     const finals = rawIds(p.finalLessonIds);
-    if (finals.length) {
+    const windowDays = completionWindow(p);
+    const cohort = cohortFor(windowDays);
+    const completion = { cohort: { from: iso(cohort.from), to: iso(cohort.to) }, windowDays, programDays: p.days };
+    if (finals.length && windowDays) {
       const f = await funnel(auth, lessonOpen(p, [FIRST_TIME]), {
         event_type: "LessonComplete",
         filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: finals }],
-      }, cohort, WINDOW_DAYS);
+      }, cohort, windowDays);
       if (f.entered >= MIN_COHORT) current.completionRate = f.converted / f.entered;
       else notes.completionRate = NOT_ENOUGH;
       current.completionCohort = f.entered;
+      current.completionWindow = windowDays;
     } else if (p.finalLessonIds.size) {
       // Final lessons exist in Airtable but nobody completed any of them in the window.
       notes.completionRate = NOT_ENOUGH;
@@ -127,12 +138,10 @@ async function compute(period, date) {
       } else notes.catalogPull = NOT_ENOUGH;
     }
 
-    return { id: p.id, name: DISPLAY_NAMES[p.id] || p.name, current, notes };
+    return { id: p.id, name: DISPLAY_NAMES[p.id] || p.name, current, notes, completion };
   }));
 
   return {
-    cohort: { from: iso(cohort.from), to: iso(cohort.to) },
-    windowDays: WINDOW_DAYS,
     catalogCohort: { from: iso(catalogCohort.from), to: iso(catalogCohort.to) },
     catalogWindowDays: CATALOG_WINDOW_DAYS,
     metrics: ["completionRate", "catalogPull"],

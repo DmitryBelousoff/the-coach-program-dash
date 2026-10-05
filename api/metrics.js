@@ -213,7 +213,8 @@ async function fetchMapping() {
       if (!names.length) st.noProgram++;
       for (const name of names) {
         const id = slug(name);
-        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), finalLessonIds: new Set(), tables: new Set() });
+        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), finalLessonIds: new Set(), tables: new Set(), days: 0 });
+        if (lastDay.has(name)) programs.get(id).days = Math.max(programs.get(id).days, lastDay.get(name));
         headlines.forEach((h) => programs.get(id).headlines.add(h));
         lessonIds.forEach((l) => programs.get(id).lessonIds.add(l));
         const d = dayOf(rec);
@@ -354,16 +355,17 @@ const ENGAGEMENT_EVENTS = ["LessonOpen", "LessonComplete", "DailyPlanItemOpen", 
 
 // Kegel workouts aren't in Airtable; their workout_id encodes the program:
 // workout_<n>_pe / workout_custom_*_pe_* -> Last longer, *_kegel_only -> Kegel Challenge,
-// plain workout_<n> -> Keep it hard (ED). Anything else (e.g. workout_custom_retain) stays unattributed.
+// plain workout_<n> -> Keep it hard (ED), workout_custom_retain -> maintenance_pe. Anything else stays unattributed.
 export function kegelProgram(workoutId) {
   if (/_kegel_only(_|$)/.test(workoutId)) return "kegel-only";
   if (/_pe(_|$)/.test(workoutId)) return "last-longer";
   if (/^workout_\d+$/.test(workoutId)) return "keep-it-hard";
+  if (workoutId === "workout_custom_retain") return "maintenance-pe";
   return null;
 }
 
 // Metrics without a previous-period comparison in the table.
-const NO_PREVIOUS = new Set(["shareOfEngagement"]);
+const NO_PREVIOUS = new Set(["shareOfEngagement", "shareOfTraffic"]);
 
 // metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
 const METRICS = {
@@ -410,6 +412,15 @@ const METRICS = {
     const own = sumForLessons(opens, p) + sumForLessons(completes, p) + planOwn + kegelOwn;
     return total ? own / total : null;
   },
+  // Share of Traffic: the program's share of all New Users — its New Users ÷ the sum of
+  // New Users over every program with an onboarding goal (shares add up to 100%).
+  shareOfTraffic: (p) => ENTRY_GOALS[p.id]
+    ? async (auth, range) => {
+        const all = await Promise.all(Object.keys(ENTRY_GOALS).map((id) => METRICS.entryUsers({ id })(auth, range)));
+        const total = all.reduce((a, x) => a + x, 0);
+        return total ? all[Object.keys(ENTRY_GOALS).indexOf(p.id)] / total : null;
+      }
+    : null,
   // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
   shares: (p) => p.lessonIds.size
     ? async (auth, range) => sumForLessons(await totalsBy(auth, { event_type: "SharingVideoSent", filters: [] }, "lessonId", range), p)
@@ -601,7 +612,7 @@ export default async function handler(req, res) {
           id: p.id, name: p.name, tables: [...p.tables],
           headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
           lessonIds: p.lessonIds.size, lessonIdSample: [...p.lessonIds].slice(0, 5),
-          finalLessonIds: [...p.finalLessonIds],
+          finalLessonIds: [...p.finalLessonIds], days: p.days,
         })),
         excluded,
         // Headlines in more than one men's program; not counted for any of them.

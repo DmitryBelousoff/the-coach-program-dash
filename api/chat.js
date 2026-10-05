@@ -34,8 +34,9 @@ const SYSTEM = `Ты — аналитик продукта The Coach (мужск
 - returnRate → Return Rate: из впервые открывших урок программы в периоде (historical count = 1) — доля открывших урок той же программы на следующий день. Когорты с незавершённым днём 1 не учитываются.
 - rating → User Satisfaction: средняя оценка 1–5 из CoachLessonRating по урокам программы; ratingCount — число оценок.
 - shares → Sharing: число SharingVideoSent по урокам программы.
-- shareOfEngagement → Share of Engagement: доля программы во всех событиях вовлечения приложения за период: LessonOpen и LessonComplete её уроков, DailyPlanItemOpen её пунктов плана, KegelTrainingStart её тренировок (workout_id *_pe → Last longer, *_kegel_only → Kegel Challenge, workout_N → Keep it hard) ÷ все такие события. Предыдущий период для неё не считается (previous = null) — для динамики используй get_metric_history.
-- Completion Rate (в таблице, не в инструментах): из начавших программу (первый урок) — доля завершивших урок последнего дня программы (Airtable «program day») за 60 дней. Когорта — выбранный период, сдвинутый на 60 дней назад; меньше 30 человек — «not enough data». У программ длиной ~60 дней (Last longer, Keep it hard) значение близко к нулю: за 60 дней их почти невозможно пройти.
+- shareOfEngagement → Share of Engagement: доля программы во всех событиях вовлечения приложения за период: LessonOpen и LessonComplete её уроков, DailyPlanItemOpen её пунктов плана, KegelTrainingStart её тренировок (workout_id *_pe → Last longer, *_kegel_only → Kegel Challenge, workout_N → Keep it hard, workout_custom_retain → maintenance_pe) ÷ все такие события. Предыдущий период для неё не считается (previous = null) — для динамики используй get_metric_history.
+- shareOfTraffic → Share of Traffic: доля программы во всех New Users — её New Users ÷ сумма New Users всех программ с целью в онбординге (Last longer, Keep it hard, Sex is a skill, Overall Health). Предыдущий период не считается — для динамики используй get_metric_history.
+- Completion Rate (в таблице, не в инструментах): из начавших программу (первый урок) — доля завершивших урок последнего дня программы (Airtable «program day») за длину программы + 50% (ceil(дни × 1,5): 60 дней → 90, 70 → 105). Когорта — выбранный период, сдвинутый назад на это окно; меньше 30 человек — «not enough data».
 - Catalog Pull (в таблице): сколько других программ в среднем начали за 14 дней выбравшие цель программы в онбординге (≥1 DailyPlanItemOpen другой программы). Когорта — выбранный период, сдвинутый на 14 дней назад.
 - Health score (кольцо у названия) — предварительный, считается в браузере: Return Rate 40% (30% = 100), User Satisfaction 33% (3,5→0, 5,0→100, от 30 оценок), Active to New Ratio 27% (5× = 100); нет составляющей — веса перераспределяются. Sharing не входит (шерятся только уроки Sex is a skill).
 - Lifetime, Monetization, Estimated Revenue — ещё не подключены.
@@ -93,7 +94,7 @@ const tools = [
       type: "object",
       properties: {
         program_id: { type: "string", description: "id программы, например last-longer" },
-        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement"] },
+        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement", "shareOfTraffic"] },
         period: PERIOD,
         end_date: END_DATE,
         points: { type: "integer", minimum: 2, maximum: 13, description: "Сколько периодов вернуть" },
