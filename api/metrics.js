@@ -292,14 +292,9 @@ export function selectPrograms(all) {
     programs.push({
       ...p, headlines: unique, lessonIds,
       finalLessonIds: new Set([...p.finalLessonIds].filter((l) => lessonIds.has(l))),
-      // Completion: last-day plan items unique to this program; if none, the day before.
-      ...(() => {
-        const final = [...p.finalHeadlines].filter((h) => unique.has(h));
-        const penult = [...p.penultimateHeadlines].filter((h) => unique.has(h));
-        return final.length
-          ? { endHeadlines: new Set(final), endDay: "last" }
-          : penult.length ? { endHeadlines: new Set(penult), endDay: "penultimate" } : { endHeadlines: new Set(), endDay: null };
-      })(),
+      // Completion: last-day / day-before plan items unique to this program.
+      finalHeadlines: new Set([...p.finalHeadlines].filter((h) => unique.has(h))),
+      penultimateHeadlines: new Set([...p.penultimateHeadlines].filter((h) => unique.has(h))),
       sharedDropped: p.headlines.size - unique.size,
     });
   }
@@ -647,7 +642,7 @@ export default async function handler(req, res) {
           id: p.id, name: p.name, tables: [...p.tables],
           headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
           lessonIds: p.lessonIds.size, lessonIdSample: [...p.lessonIds].slice(0, 5),
-          finalLessonIds: [...p.finalLessonIds], days: p.days, endDay: p.endDay, endHeadlines: [...p.endHeadlines],
+          finalLessonIds: [...p.finalLessonIds], days: p.days, finalHeadlines: [...p.finalHeadlines], penultimateHeadlines: [...p.penultimateHeadlines],
         })),
         excluded,
         // Headlines in more than one men's program; not counted for any of them.

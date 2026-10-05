@@ -13,7 +13,7 @@
 // Completion Rate: of users who opened their first lesson of the program in the cohort
 //   window, the share who opened (DailyPlanItemOpen) a plan item of the program's last day
 //   (Airtable `program day`; only items first appearing on that day and unique to the
-//   program; if there are none, the day before) within the program's length + 50%
+//   program; if there are none or none was ever opened, the day before) within the program's length + 50%
 //   (ceil(days × 1.5)).
 // Catalog Pull: of users who picked the program's goal in onboarding in the cohort window,
 //   the average number of OTHER programs they started (≥1 DailyPlanItemOpen of that
@@ -106,17 +106,25 @@ async function compute(period, date) {
     // Completion Rate
     const windowDays = completionWindow(p);
     const cohort = cohortFor(windowDays);
-    const completion = { cohort: { from: iso(cohort.from), to: iso(cohort.to) }, windowDays, programDays: p.days, endDay: p.endDay };
-    if (p.endHeadlines.size && windowDays) {
+    // End-of-program items: the last day's, or the day before's when the last day has none
+    // that are unique to the program or none of them was ever opened (title mismatch).
+    let endDay = null, endHeadlines = [];
+    for (const [day, set] of [["last", p.finalHeadlines], ["penultimate", p.penultimateHeadlines]]) {
+      if (!set.size) continue;
+      const opened = await uniques(auth, { event_type: "DailyPlanItemOpen", filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...set] }] }, { from: cohort.from, to: date });
+      if (opened > 0) { endDay = day; endHeadlines = [...set]; break; }
+    }
+    const completion = { cohort: { from: iso(cohort.from), to: iso(cohort.to) }, windowDays, programDays: p.days, endDay, endHeadlines };
+    if (endHeadlines.length && windowDays) {
       const f = await funnel(auth, lessonOpen(p, [FIRST_TIME]), {
         event_type: "DailyPlanItemOpen",
-        filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: [...p.endHeadlines] }],
+        filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: endHeadlines }],
       }, cohort, windowDays);
       if (f.entered >= MIN_COHORT) current.completionRate = f.converted / f.entered;
       else notes.completionRate = NOT_ENOUGH;
       current.completionCohort = f.entered;
       current.completionWindow = windowDays;
-      current.completionEndDay = p.endDay;
+      current.completionEndDay = endDay;
     }
 
     // Catalog Pull (only programs with an onboarding goal)
