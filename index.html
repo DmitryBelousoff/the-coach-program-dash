@@ -442,8 +442,8 @@
     { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
     { key: "lifetimeWeb", title: "Lifetime · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
     { key: "completionRate", title: "Completion Rate", cohort: true,
-      desc: "Доля начавших программу, кто открыл пункт плана её последнего дня (если такого не определить — предпоследнего) за длину программы + 50% (60-дневная — за 90 дней). Когорта — выбранный период, сдвинутый назад на это окно",
-      fmt: (v, m) => ({ val: nf1.format(v * 100), unit: "%", sub: m.completionCohort ? `из ${nf0.format(m.completionCohort)} начавших${m.completionWindow ? ` · за ${nf0.format(m.completionWindow)} дн.` : ""}${m.completionEndDay === "penultimate" ? " · по предпоследнему дню" : ""}` : null }) },
+      desc: "Доля начавших программу (первый CurrentDay), кто дошёл до её последнего дня (CurrentDay с day = последний день) за длину программы + 50% (60-дневная — за 90 дней). Когорта — выбранный период, сдвинутый назад на это окно",
+      fmt: (v, m) => ({ val: nf1.format(v * 100), unit: "%", sub: m.completionCohort ? `из ${nf0.format(m.completionCohort)} начавших${m.completionWindow ? ` · за ${nf0.format(m.completionWindow)} дн.` : ""}` : null }) },
     { key: "returnRate", title: "Return Rate", desc: "Вернулись в программу на следующий день после первого занятия", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
     { key: "rating", title: "User Satisfaction", desc: "Средняя оценка уроков от 1 до 5, в скобках — число оценок. Клик — динамика",
       // No delta chip: the value itself opens the trend; the number of ratings is shown in brackets.
