@@ -175,6 +175,7 @@
   .unit{font-family:var(--font-mono); font-size:12px; color:var(--ink-mute); margin-left:3px;}
   .sub{display:block; font-family:var(--font-mono); font-size:11px; color:var(--ink-mute); margin-top:3px;}
   .empty{font-family:var(--font-mono); color:var(--ink-mute);}
+  .empty.note{font-size:12px;}
 
   .delta{
     font-family:var(--font-mono); font-size:11px; font-weight:500; white-space:nowrap;
@@ -358,7 +359,7 @@
   </section>
 
   <p class="footnote">
-    <b>Health score</b> (кольцо у названия, предварительный) — взвешенное среднее: Return Rate 35% (30% = 100 баллов), User Satisfaction 30% (3,5 → 0, 5,0 → 100; от 30 оценок), Active to New Ratio 25% (5× = 100), Sharing на 1 000 Active Users 10% (20 = 100). Нет составляющей — её вес делится между остальными. Наведите на кольцо, чтобы увидеть разбивку.
+    <b>Health score</b> (кольцо у названия, предварительный) — взвешенное среднее: Return Rate 40% (30% = 100 баллов), User Satisfaction 33% (3,5 → 0, 5,0 → 100; от 30 оценок), Active to New Ratio 27% (5× = 100). Нет составляющей — её вес делится между остальными. Наведите на кольцо, чтобы увидеть разбивку.
     Бейджи показывают изменение к предыдущему периоду такой же длины; клик по бейджу (у User Satisfaction — по значению) открывает динамику. Клик по заголовку столбца — сортировка.
   </p>
 
@@ -440,7 +441,9 @@
     { key: "pullRatio", title: "Active to New Ratio", desc: "Active Users ÷ New Users: сколько активных пользователей программы на одного нового", fmt: (v) => ({ val: nf2.format(v), unit: "×" }) },
     { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
     { key: "lifetimeWeb", title: "Lifetime · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
-    { key: "completionRate", title: "Completion Rate", desc: "Доля прошедших программу до конца", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
+    { key: "completionRate", title: "Completion Rate", cohort: true,
+      desc: "Доля начавших программу, кто за 60 дней завершил урок её последнего дня. Когорта — выбранный период, сдвинутый на 60 дней назад",
+      fmt: (v, m) => ({ val: nf1.format(v * 100), unit: "%", sub: m.completionCohort ? `из ${nf0.format(m.completionCohort)} начавших` : null }) },
     { key: "returnRate", title: "Return Rate", desc: "Вернулись в программу на следующий день после первого занятия", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
     { key: "rating", title: "User Satisfaction", desc: "Средняя оценка уроков от 1 до 5, в скобках — число оценок. Клик — динамика",
       // No delta chip: the value itself opens the trend; the number of ratings is shown in brackets.
@@ -450,8 +453,10 @@
         unit: m.ratingCount == null ? null : `(${nf0.format(m.ratingCount)})`,
         sub: m.sentiment == null ? null : "сентимент " + (m.sentiment > 0 ? "+" : "") + nf2.format(m.sentiment),
       }) },
-    { key: "catalogPull", title: "Catalog Pull", desc: "Среднее число других программ, начатых после неё", fmt: (v) => ({ val: nf1.format(v) }) },
-    { key: "shareOfEngagement", title: "Share of Engagement", desc: "Доля всех завершённых уроков и упражнений в приложении", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
+    { key: "catalogPull", title: "Catalog Pull", cohort: true,
+      desc: "Сколько других программ в среднем начали за 60 дней выбравшие цель этой программы в онбординге. Когорта — выбранный период, сдвинутый на 60 дней назад",
+      fmt: (v, m) => ({ val: nf2.format(v), sub: m.catalogCohort ? `из ${nf0.format(m.catalogCohort)} выбравших цель` : null }) },
+    { key: "shareOfEngagement", title: "Share of Engagement", desc: "Доля программы во всех завершённых уроках и упражнениях приложения за период", fmt: (v) => ({ val: nf1.format(v * 100), unit: "%" }) },
     { key: "shares", title: "Sharing", desc: "Сколько раз программой поделились", fmt: plain },
     { key: "monetization", title: "Monetization", desc: "Доход от консультаций, товаров и доп. продуктов, инициированных программой", fmt: (v) => ({ val: nf0.format(v), unit: "$" }) },
     { key: "estimatedRevenue", title: "Estimated Revenue", desc: "Совокупная бизнес-выручка, атрибуцированная программе", fmt: (v) => ({ val: nf0.format(v), unit: "$" }) },
@@ -507,12 +512,11 @@
   // Completion Rate, Catalog Pull, sentiment etc. are connected.
   const MIN_RATINGS = 30;
   const HEALTH_COMPONENTS = [
-    { label: "Return Rate", weight: 0.35, score: (m) => m.returnRate == null ? null : m.returnRate / 0.30 },
-    { label: "User Satisfaction", weight: 0.30, score: (m) =>
+    // Sharing is left out: only Sex is a skill has shareable lessons.
+    { label: "Return Rate", weight: 0.40, score: (m) => m.returnRate == null ? null : m.returnRate / 0.30 },
+    { label: "User Satisfaction", weight: 0.33, score: (m) =>
         m.rating == null || (m.ratingCount != null && m.ratingCount < MIN_RATINGS) ? null : (m.rating - 3.5) / 1.5 },
-    { label: "Active to New Ratio", weight: 0.25, score: (m) => m.pullRatio == null ? null : m.pullRatio / 5 },
-    { label: "Sharing", weight: 0.10, score: (m) =>
-        m.shares == null || !m.totalUsers ? null : (m.shares / m.totalUsers * 1000) / 20 },
+    { label: "Active to New Ratio", weight: 0.27, score: (m) => m.pullRatio == null ? null : m.pullRatio / 5 },
   ];
 
   // -> { score, parts: [{ label, weight, value }] } or null
@@ -617,9 +621,15 @@
     el.body.innerHTML = sortedPrograms().map((p) => {
       const cells = orderedColumns().map((col) => {
         const v = p.current[col.key];
-        if (v == null) return `<td><span class="empty">—</span></td>`;
+        if (v == null) {
+          const note = p.notes && p.notes[col.key];
+          return `<td>${note ? `<span class="empty note" title="Меньше 30 пользователей в когорте: например, программа вышла меньше 60 дней назад">${escapeHTML(note)}</span>` : `<span class="empty">—</span>`}</td>`;
+        }
         const f = col.fmt(v, p.current);
         const value = `<span class="val">${f.val}</span>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}${f.sub ? `<span class="sub">${f.sub}</span>` : ""}`;
+        if (col.cohort) {
+          return `<td><div class="cell"><div>${value}</div></div></td>`;
+        }
         if (col.noDelta) {
           const title = p.previous[col.key] == null ? "Открыть динамику" : `Пред. период: ${valueText(p.previous[col.key], col)} · открыть динамику`;
           return `<td><div class="cell">
@@ -708,6 +718,31 @@
     if (b && state.data && state.data.programs.some((p) => p.id === b.dataset.trend)) openTrend(b.dataset.trend, b.dataset.metric);
   });
 
+  // Completion Rate and Catalog Pull come from a separate, slower endpoint (60-day
+  // cohorts); they are merged into the table when ready.
+  async function loadCohorts(data) {
+    if (data.source !== "amplitude") return;
+    try {
+      const r = await fetch("/api/cohorts?" + new URLSearchParams({ period: state.period, date: state.date }));
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      if (state.data !== data) return; // the user switched period meanwhile
+      const byId = new Map(body.programs.map((p) => [p.id, p]));
+      for (const p of data.programs) {
+        const c = byId.get(p.id);
+        if (!c) continue;
+        Object.assign(p.current, c.current);
+        p.notes = Object.assign(p.notes || {}, c.notes);
+      }
+      for (const m of body.metrics) if (!data.liveMetrics.includes(m)) data.liveMetrics.push(m);
+      renderBadge(data);
+      renderHead();
+      renderBody();
+    } catch (e) {
+      console.warn("Cohort metrics unavailable:", e.message);
+    }
+  }
+
   async function load() {
     el.table.classList.add("loading");
     try {
@@ -717,6 +752,7 @@
       renderHead();
       renderBody();
       loadInsights();
+      loadCohorts(state.data);
     } catch (e) {
       el.body.innerHTML = `<tr><td class="sticky" colspan="${COLUMNS.length + 1}"><span class="empty">Не удалось загрузить данные</span></td></tr>`;
       console.error(e);
