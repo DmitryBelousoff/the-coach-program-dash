@@ -23,6 +23,7 @@ const AIRTABLE_BASE = process.env.AIRTABLE_BASE || "app1k5mFTR9tmsZmO"; // (PROD
 const PROGRAM_FIELD = process.env.AIRTABLE_PROGRAM_FIELD || "Program";
 const HEADLINE_FIELD = process.env.AIRTABLE_HEADLINE_FIELD || "headline";
 const LESSON_ID_FIELD = process.env.AIRTABLE_LESSON_ID_FIELD || "id"; // = lesson_id in Amplitude
+const DAY_FIELD = process.env.AIRTABLE_DAY_FIELD || "program day";   // the program's last day = completion
 export const AMPLITUDE_HOST = process.env.AMPLITUDE_HOST || "https://amplitude.com"; // EU: https://analytics.eu.amplitude.com
 
 const PERIOD_DAYS = { week: 7, month: 30, quarter: 91 };
@@ -47,7 +48,7 @@ export const ENTRY_GOALS = {
   "overall-health": "BOOST OVERALL HEALTH",
 };
 const MAX_HISTORY_POINTS = 13;
-const AMPLITUDE_CONCURRENCY = 5; // Amplitude allows 5 concurrent Dashboard API requests
+export const AMPLITUDE_CONCURRENCY = 5; // Amplitude allows 5 concurrent Dashboard API requests
 const AIRTABLE_CONCURRENCY = 4;  // Airtable allows 5 requests/s per base
 const MAPPING_TTL_MS = 10 * 60 * 1000;
 
@@ -75,7 +76,7 @@ function rangeEndingAt(period, to) {
 
 // ---------- Airtable mapping ----------
 
-function slug(name) {
+export function slug(name) {
   return String(name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
@@ -131,8 +132,9 @@ async function resolveSchemas() {
     const program = t.fields.find((f) => eq(f.name, PROGRAM_FIELD));
     const headline = t.fields.find((f) => eq(f.name, HEADLINE_FIELD));
     const lessonId = t.fields.find((f) => eq(f.name, LESSON_ID_FIELD));
+    const day = t.fields.find((f) => eq(f.name, DAY_FIELD));
     if (!program || !headline) continue;
-    const schema = { table: t.id, name: t.name, program: program.name, programType: program.type, headline: headline.name, lessonId: lessonId && lessonId.name };
+    const schema = { table: t.id, name: t.name, program: program.name, programType: program.type, headline: headline.name, lessonId: lessonId && lessonId.name, day: day && day.name };
     if (program.type === "multipleRecordLinks") {
       const linked = tables.find((x) => x.id === program.options.linkedTableId);
       const primary = linked && linked.fields.find((f) => f.id === linked.primaryFieldId);
@@ -179,12 +181,27 @@ async function fetchMapping() {
         fieldValues(rec.fields[schema.link.field]).forEach((n) => linkNames.set(rec.id, n));
       }
     }
-    const fields = [schema.program, schema.headline, ...(schema.lessonId ? [schema.lessonId] : [])];
+    const fields = [schema.program, schema.headline, ...(schema.lessonId ? [schema.lessonId] : []), ...(schema.day ? [schema.day] : [])];
     return { schema, linkNames, records: await allRecords(schema.table, fields) };
   }), AIRTABLE_CONCURRENCY);
 
   for (const { schema, linkNames, records } of loaded) {
     const st = { table: schema.name, program: `${schema.program} (${schema.programType || "?"})`, headline: schema.headline, records: 0, noProgram: 0, noHeadline: 0, programs: {} };
+    // Last program day of this table (per program): lessons on it mark completion.
+    const dayOf = (rec) => {
+      const m = schema.day && /\d+/.exec(fieldValues(rec.fields[schema.day]).join(" "));
+      return m ? Number(m[0]) : null;
+    };
+    const lastDay = new Map(); // program name -> max day in this table
+    for (const rec of records) {
+      const d = dayOf(rec);
+      if (d == null) continue;
+      for (const v of fieldValues(rec.fields[schema.program])) {
+        const n = ((linkNames && linkNames.get(v)) || v).trim();
+        if (n && (!lastDay.has(n) || d > lastDay.get(n))) lastDay.set(n, d);
+      }
+    }
+    st.lastDay = Object.fromEntries(lastDay);
     for (const rec of records) {
       st.records++;
       const headlines = fieldValues(rec.fields[schema.headline]).map((s) => s.trim()).filter(Boolean);
@@ -196,9 +213,11 @@ async function fetchMapping() {
       if (!names.length) st.noProgram++;
       for (const name of names) {
         const id = slug(name);
-        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), tables: new Set() });
+        if (!programs.has(id)) programs.set(id, { id, name, headlines: new Set(), lessonIds: new Set(), finalLessonIds: new Set(), tables: new Set() });
         headlines.forEach((h) => programs.get(id).headlines.add(h));
         lessonIds.forEach((l) => programs.get(id).lessonIds.add(l));
+        const d = dayOf(rec);
+        if (d != null && d === lastDay.get(name)) lessonIds.forEach((l) => programs.get(id).finalLessonIds.add(l));
         programs.get(id).tables.add(schema.name);
         st.programs[name] = (st.programs[name] || 0) + 1;
       }
@@ -241,7 +260,12 @@ export function selectPrograms(all) {
   for (const p of male) {
     const unique = byHeadline.keep(p);
     if (!unique.size) { excluded.push({ name: p.name, reason: "all headlines shared with other programs" }); continue; }
-    programs.push({ ...p, headlines: unique, lessonIds: byLessonId.keep(p), sharedDropped: p.headlines.size - unique.size });
+    const lessonIds = byLessonId.keep(p);
+    programs.push({
+      ...p, headlines: unique, lessonIds,
+      finalLessonIds: new Set([...p.finalLessonIds].filter((l) => lessonIds.has(l))),
+      sharedDropped: p.headlines.size - unique.size,
+    });
   }
   return { programs, excluded, shared: byHeadline.shared };
 }
@@ -260,7 +284,10 @@ function estimateCost(url) {
   const u = new URL(url);
   const start = parseDate(String(u.searchParams.get("start") || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"));
   const end = parseDate(String(u.searchParams.get("end") || "").replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"));
-  const days = start && end ? Math.round((end - start) / 86400000) + 1 : 30;
+  let days = start && end ? Math.round((end - start) / 86400000) + 1 : 30;
+  // Funnels also scan their conversion window after the range.
+  const cs = Number(u.searchParams.get("cs"));
+  if (cs > 0) days += Math.round(cs / 86400);
   return Math.min(AMPLITUDE_COST_BUDGET, days * 5);
 }
 
@@ -349,6 +376,17 @@ const METRICS = {
   ratingCount: (p) => p.lessonIds.size
     ? async (auth, range) => { const byLesson = await ratingsByLesson(auth, range); let n = 0; for (const id of p.lessonIds) n += (byLesson.get(id) || { n: 0 }).n; return n; }
     : null,
+  // Share of Engagement: the program's share of all completed lessons/exercises in the app
+  // (LessonComplete by lesson_id; denominator = every LessonComplete in the period).
+  shareOfEngagement: (p) => p.lessonIds.size
+    ? async (auth, range) => {
+        const [byLesson, total] = await Promise.all([
+          totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", range),
+          eventTotal(auth, { event_type: "LessonComplete", filters: [] }, range),
+        ]);
+        return total ? sumForLessons(byLesson, p) / total : null;
+      }
+    : null,
   // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
   shares: (p) => p.lessonIds.size
     ? async (auth, range) => sumForLessons(await totalsBy(auth, { event_type: "SharingVideoSent", filters: [] }, "lessonId", range), p)
@@ -388,9 +426,9 @@ async function fetchUniqueUsers(auth, event, range) {
 // the Android (`rating`) and iOS (`value`) properties, and returns the weighted mean.
 // Event totals for a range grouped by a lesson-id property, memoized per query:
 // the same result serves every program. -> Map lessonKey -> count
-const totalsMemo = new Map(); // key -> { at, value: Promise }
+export const totalsMemo = new Map(); // key -> { at, value: Promise }
 
-function totalsBy(auth, event, groupProp, range) {
+export function totalsBy(auth, event, groupProp, range) {
   const key = JSON.stringify([event, groupProp, iso(range.from), iso(range.to)]);
   const hit = totalsMemo.get(key);
   if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
@@ -405,12 +443,38 @@ function totalsBy(auth, event, groupProp, range) {
     if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
     const data = (await r.json()).data || {};
     const out = new Map();
+    out.raw = new Map(); // lessonKey -> Set of the exact lesson ids seen in events
     (data.seriesLabels || []).forEach((label, i) => {
-      const v = lessonKey(Array.isArray(label) ? label[label.length - 1] : label);
+      const rawId = String(Array.isArray(label) ? label[label.length - 1] : label);
+      const v = lessonKey(rawId);
+      if (!out.raw.has(v)) out.raw.set(v, new Set());
+      out.raw.get(v).add(rawId);
       const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
       out.set(v, (out.get(v) || 0) + (cell ? cell.value : 0));
     });
     return out;
+  })();
+  totalsMemo.set(key, { at: Date.now(), value });
+  value.catch(() => totalsMemo.delete(key));
+  return value;
+}
+
+// Total number of events in a range (memoized, shared by all programs).
+export function eventTotal(auth, event, range) {
+  const key = JSON.stringify(["total", event, iso(range.from), iso(range.to)]);
+  const hit = totalsMemo.get(key);
+  if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
+  const value = (async () => {
+    const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+    url.searchParams.set("e", JSON.stringify(event));
+    url.searchParams.set("m", "totals");
+    url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+    url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+    const r = await amplitudeFetch(url, auth);
+    if (!r.ok) throw new Error(`Amplitude request failed (${r.status})`);
+    const data = (await r.json()).data || {};
+    const cell = data.seriesCollapsed && data.seriesCollapsed[0] && data.seriesCollapsed[0][0];
+    return cell ? cell.value : 0;
   })();
   totalsMemo.set(key, { at: Date.now(), value });
   value.catch(() => totalsMemo.delete(key));
@@ -480,7 +544,7 @@ async function dayOneReturn(auth, startEvent, returnEvent, range) {
   return cohort ? returned / cohort : null;
 }
 
-async function pool(tasks, limit) {
+export async function pool(tasks, limit) {
   const out = new Array(tasks.length);
   let next = 0;
   async function worker() {
@@ -512,6 +576,7 @@ export default async function handler(req, res) {
           id: p.id, name: p.name, tables: [...p.tables],
           headlines: p.headlines.size, sharedDropped: p.sharedDropped, sample: [...p.headlines].slice(0, 5),
           lessonIds: p.lessonIds.size, lessonIdSample: [...p.lessonIds].slice(0, 5),
+          finalLessonIds: [...p.finalLessonIds],
         })),
         excluded,
         // Headlines in more than one men's program; not counted for any of them.
