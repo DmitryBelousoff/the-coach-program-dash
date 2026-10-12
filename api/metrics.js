@@ -371,6 +371,57 @@ export function kegelProgram(workoutId) {
 // Metrics without a previous-period comparison in the table.
 const NO_PREVIOUS = new Set(["shareOfEngagement", "shareOfTraffic"]);
 
+// Monetization is attributed by the buyer's main goal (user property `goals`, set in
+// onboarding). Older onboarding versions used other wordings of the same goal.
+const GOAL_VALUES = {
+  "last-longer": ["BEAT PREMATURE EJACULATION", "FIX PREMATURE EJACULATION", "LAST LONGER IN BED"],
+  "keep-it-hard": ["BEAT ERECTILE DYSFUNCTION", "FIX ERECTILE DYSFUNCTION"],
+  "sex-skill-man": ["IMPROVE SEX SKILLS"],
+  "overall-health": ["BOOST OVERALL HEALTH"],
+};
+
+// Physical goods revenue: payment_succeeded (test orders excluded) of users with one of
+// the goals, Σ price × qty over the `products` array. Amplitude splits the array, so the
+// query is grouped by product entry (a JSON string) and each entry × its event count.
+const revenueMemo = new Map();
+export function goodsRevenue(auth, goals, range, { raw = false } = {}) {
+  const key = JSON.stringify([goals, iso(range.from), iso(range.to), raw]);
+  const hit = revenueMemo.get(key);
+  if (hit && Date.now() - hit.at < MAPPING_TTL_MS) return hit.value;
+  const value = (async () => {
+    const url = new URL(`${AMPLITUDE_HOST}/api/2/events/segmentation`);
+    url.searchParams.set("e", JSON.stringify({
+      event_type: "payment_succeeded",
+      filters: [{ subprop_type: "event", subprop_key: "is_test_order", subprop_op: "is not", subprop_value: ["True", "true"] }],
+      group_by: [{ type: "event", value: "products" }],
+    }));
+    url.searchParams.set("s", JSON.stringify([{ prop: "gp:goals", op: "is", values: goals }]));
+    url.searchParams.set("m", "totals");
+    url.searchParams.set("start", iso(range.from).replace(/-/g, ""));
+    url.searchParams.set("end", iso(range.to).replace(/-/g, ""));
+    url.searchParams.set("limit", "1000");
+    const r = await amplitudeFetch(url, auth);
+    if (!r.ok) throw new Error(`Amplitude request failed (${r.status})${r.headers.get("x-amplitude-error") ? ": " + r.headers.get("x-amplitude-error") : ""}`);
+    const data = (await r.json()).data || {};
+    let total = 0;
+    const lines = [];
+    (data.seriesLabels || []).forEach((label, i) => {
+      const text = String(Array.isArray(label) ? label[label.length - 1] : label);
+      const cell = data.seriesCollapsed && data.seriesCollapsed[i] && data.seriesCollapsed[i][0];
+      const n = cell ? cell.value : 0;
+      let item = null;
+      try { item = JSON.parse(text); } catch { /* "(none)" or malformed entry */ }
+      const amount = item && Number.isFinite(Number(item.price)) ? Number(item.price) * (Number(item.qty) || 1) * n : 0;
+      total += amount;
+      if (raw) lines.push({ entry: text, events: n, amount });
+    });
+    return raw ? { total, lines } : total;
+  })();
+  revenueMemo.set(key, { at: Date.now(), value });
+  value.catch(() => revenueMemo.delete(key));
+  return value;
+}
+
 // metric -> (program) -> null (no source for this program) | (auth, range) => Promise<number>
 const METRICS = {
   totalUsers: (p) => (auth, range) => uniqueUsers(auth, lessonOpen(p), range),
@@ -423,6 +474,16 @@ const METRICS = {
         const all = await Promise.all(Object.keys(ENTRY_GOALS).map((id) => METRICS.entryUsers({ id })(auth, range)));
         const total = all.reduce((a, x) => a + x, 0);
         return total ? all[Object.keys(ENTRY_GOALS).indexOf(p.id)] / total : null;
+      }
+    : null,
+  // Monetization (physical goods for now): revenue from orders of users whose main
+  // onboarding goal is this program's goal.
+  monetization: (p) => GOAL_VALUES[p.id] ? (auth, range) => goodsRevenue(auth, GOAL_VALUES[p.id], range) : null,
+  // Monetization per Active User: Monetization ÷ Active Users of the program.
+  monetizationPerUser: (p) => GOAL_VALUES[p.id]
+    ? async (auth, range) => {
+        const [revenue, users] = await Promise.all([goodsRevenue(auth, GOAL_VALUES[p.id], range), METRICS.totalUsers(p)(auth, range)]);
+        return users ? revenue / users : null;
       }
     : null,
   // Sharing: how many times the program's lessons were shared (SharingVideoSent by lessonId).
@@ -638,6 +699,19 @@ export default async function handler(req, res) {
       const owners = (list) => list.filter((p) => p.lessonIds.has(lessonKey(q)) || p.headlines.has(q)).map((p) => p.name);
       res.setHeader("Cache-Control", "no-store");
       res.status(200).json({ q, allPrograms: owners(mapping.programs), afterRules: owners(programs) });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+    return;
+  }
+
+  // Diagnostics: product lines behind Monetization for one program.
+  if (req.query.debug === "monetization") {
+    try {
+      const id = String(req.query.program || "last-longer");
+      const out = await goodsRevenue(amplitudeAuth(), GOAL_VALUES[id] || [], { from: parseDate(String(req.query.from)), to: parseDate(String(req.query.to)) }, { raw: true });
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json(out);
     } catch (e) {
       res.status(502).json({ error: e.message });
     }

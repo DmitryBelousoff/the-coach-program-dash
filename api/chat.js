@@ -39,7 +39,9 @@ const SYSTEM = `Ты — аналитик продукта The Coach (мужск
 - Completion Rate (в таблице, не в инструментах): из вошедших в программу (первый CurrentDay с её program_id) — доля дошедших до последнего дня (CurrentDay с day = последний «program day» из Airtable) за длину программы + 50% (ceil(дни × 1,5): 60 дней → 90, 70 → 105). Когорта — выбранный период, сдвинутый назад на это окно; меньше 30 человек — «not enough data».
 - Catalog Pull (в таблице): сколько других программ в среднем начали за 14 дней выбравшие цель программы в онбординге (≥1 DailyPlanItemOpen другой программы). Когорта — выбранный период, сдвинутый на 14 дней назад.
 - Health score (кольцо у названия) — предварительный, считается в браузере: Return Rate 40% (30% = 100), User Satisfaction 33% (3,5→0, 5,0→100, от 30 оценок), Active to New Ratio 27% (5× = 100); нет составляющей — веса перераспределяются. Sharing не входит (шерятся только уроки Sex is a skill).
-- Lifetime, Monetization, Estimated Revenue — ещё не подключены.
+- monetization → Monetization: выручка от физических товаров в $ за период — payment_succeeded (без тестовых заказов), Σ price × qty по массиву products, у покупателей, чья цель в онбординге (user property goals) — цель программы. Есть только у Last longer (BEAT/FIX PREMATURE EJACULATION, LAST LONGER IN BED), Keep it hard (BEAT/FIX ERECTILE DYSFUNCTION), Sex is a skill (IMPROVE SEX SKILLS), Overall Health (BOOST OVERALL HEALTH). Большинство заказов приходит без цели (покупатели не связаны с пользователем приложения) и не попадает ни в одну программу.
+- monetizationPerUser → Monetization per Active User: Monetization ÷ Active Users программы.
+- Lifetime, Estimated Revenue — ещё не подключены.
 
 ## Ограничения данных
 - Уроки с одинаковым headline/lesson_id в нескольких программах не учитываются ни в одной (нельзя понять, из какой программы открыт урок). Сильнее всего это занижает Keep it hard, Kegel Challenge и пары версий Sex is a skill.
@@ -94,7 +96,7 @@ const tools = [
       type: "object",
       properties: {
         program_id: { type: "string", description: "id программы, например last-longer" },
-        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement", "shareOfTraffic"] },
+        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement", "shareOfTraffic", "monetization", "monetizationPerUser"] },
         period: PERIOD,
         end_date: END_DATE,
         points: { type: "integer", minimum: 2, maximum: 13, description: "Сколько периодов вернуть" },
