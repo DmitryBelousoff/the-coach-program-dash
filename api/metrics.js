@@ -661,7 +661,7 @@ export async function pool(tasks, limit) {
 // ---------- handler ----------
 
 // Many Amplitude queries per request (programs × metrics × 2 periods).
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   // Diagnostics: which Airtable tables/columns were used and what programs they yield.

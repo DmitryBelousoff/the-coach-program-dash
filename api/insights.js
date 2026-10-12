@@ -20,7 +20,7 @@ import {
   addDays, amplitudeAuth, amplitudeFetch, iso, lessonKey, lessonOpen, loadMapping, parseDate, selectPrograms,
 } from "./metrics.js";
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 300 };
 
 const WEEKS = 12;
 const BASELINE_WEEKS = 8; // weeks before the latest one used as the "norm"

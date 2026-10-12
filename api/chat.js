@@ -12,7 +12,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaTool } from "@anthropic-ai/sdk/helpers/beta/json-schema";
 import metricsHandler from "./metrics.js";
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 300 };
 
 const MODEL = "claude-opus-5-5";
 const MAX_TURNS = 20;           // conversation turns kept from the client

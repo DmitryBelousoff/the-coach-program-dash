@@ -23,7 +23,7 @@ import {
   addDays, amplitudeAuth, amplitudeFetch, iso, lessonOpen, loadMapping, parseDate, selectPrograms,
 } from "./metrics.js";
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 300 };
 
 const COMPLETION_SLACK = 1.5;   // Completion Rate window = program days × 1.5
 const CATALOG_WINDOW_DAYS = 14; // Catalog Pull
