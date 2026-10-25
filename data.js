@@ -17,7 +17,7 @@
 //
 // Metrics = {
 //   totalUsers, entryUsers,                      // counts
-//   lifetimeOrganic, lifetimeWeb,                 // days
+//   ltv, lifetimeWeb,                             // $ per user
 //   completionRate, returnRate,                   // 0..1
 //   rating, sentiment,                            // rating 1..5, sentiment -1..1
 //   catalogPull,                                  // avg programs started after this one
@@ -33,25 +33,25 @@
   const BASE_PROGRAMS = [
     {
       id: "last-longer", name: "Last Longer",
-      base: { totalUsers: 4200, entryUsers: 620, lifetimeOrganic: 46, lifetimeWeb: 39,
+      base: { totalUsers: 4200, entryUsers: 620, ltv: 90.12, lifetimeWeb: 39,
         completionRate: 0.61, returnRate: 0.54, rating: 4.3, sentiment: 0.41, catalogPull: 2.1,
         shareOfEngagement: 0.18, monetization: 3800, estimatedRevenue: 21400, shares: 340 },
     },
     {
       id: "keep-it-hard", name: "Keep it Hard",
-      base: { totalUsers: 3100, entryUsers: 450, lifetimeOrganic: 52, lifetimeWeb: 44,
+      base: { totalUsers: 3100, entryUsers: 450, ltv: 90.49, lifetimeWeb: 44,
         completionRate: 0.57, returnRate: 0.49, rating: 4.1, sentiment: 0.28, catalogPull: 1.8,
         shareOfEngagement: 0.14, monetization: 5200, estimatedRevenue: 18900, shares: 190 },
     },
     {
       id: "sex-is-a-skill", name: "Sex is a Skill",
-      base: { totalUsers: 5600, entryUsers: 980, lifetimeOrganic: 38, lifetimeWeb: 31,
+      base: { totalUsers: 5600, entryUsers: 980, ltv: 90.86, lifetimeWeb: 31,
         completionRate: 0.68, returnRate: 0.63, rating: 4.6, sentiment: 0.62, catalogPull: 2.9,
         shareOfEngagement: 0.24, monetization: 2900, estimatedRevenue: 26300, shares: 720 },
     },
     {
       id: "overall-health", name: "Overall Health",
-      base: { totalUsers: 7800, entryUsers: 1450, lifetimeOrganic: 33, lifetimeWeb: 28,
+      base: { totalUsers: 7800, entryUsers: 1450, ltv: 89.65, lifetimeWeb: 28,
         completionRate: 0.72, returnRate: 0.58, rating: 4.4, sentiment: 0.47, catalogPull: 3.4,
         shareOfEngagement: 0.29, monetization: 2100, estimatedRevenue: 31800, shares: 510 },
     },
@@ -110,7 +110,7 @@
         case "rating": v = Math.min(5, round(v, 1)); break;
         case "sentiment": v = Math.max(-1, Math.min(1, round(v, 2))); break;
         case "catalogPull": v = round(v, 1); break;
-        case "lifetimeOrganic": case "lifetimeWeb": v = Math.round(v); break;
+        case "ltv": case "lifetimeWeb": v = round(v, 2); break;
         default: v = Math.round(v / 10) * 10;
       }
       out[key] = v;

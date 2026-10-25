@@ -369,7 +369,16 @@ export function kegelProgram(workoutId) {
 }
 
 // Metrics without a previous-period comparison in the table.
-const NO_PREVIOUS = new Set(["shareOfEngagement", "shareOfTraffic"]);
+const NO_PREVIOUS = new Set(["shareOfEngagement", "shareOfTraffic", "ltv"]);
+
+// LTV per program, $ — a fixed estimate by the onboarding goal the user picked
+// (English onboarding), provided by the team; not computed from Amplitude.
+const LTV_USD = {
+  "last-longer": 90.12,
+  "keep-it-hard": 90.49,
+  "sex-skill-man": 90.86,
+  "overall-health": 89.65,
+};
 
 // Monetization is attributed by the buyer's main goal (user property `goals`, set in
 // onboarding). Older onboarding versions used other wordings of the same goal.
@@ -476,6 +485,8 @@ const METRICS = {
         return total ? all[Object.keys(ENTRY_GOALS).indexOf(p.id)] / total : null;
       }
     : null,
+  // LTV: fixed estimate by onboarding goal (see LTV_USD); same for every period.
+  ltv: (p) => LTV_USD[p.id] != null ? async () => LTV_USD[p.id] : null,
   // Monetization (physical goods for now): revenue from orders of users whose main
   // onboarding goal is this program's goal.
   monetization: (p) => GOAL_VALUES[p.id] ? (auth, range) => goodsRevenue(auth, GOAL_VALUES[p.id], range) : null,

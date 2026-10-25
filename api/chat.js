@@ -41,7 +41,8 @@ const SYSTEM = `Ты — аналитик продукта The Coach (мужск
 - Health score (кольцо у названия) — предварительный, считается в браузере: Return Rate 40% (30% = 100), User Satisfaction 33% (3,5→0, 5,0→100, от 30 оценок), Active to New Ratio 27% (5× = 100); нет составляющей — веса перераспределяются. Sharing не входит (шерятся только уроки Sex is a skill).
 - monetization → Monetization: выручка от физических товаров в $ за период — payment_succeeded (без тестовых заказов), Σ price × qty по массиву products, у покупателей, чья цель в онбординге (user property goals) — цель программы. Есть только у Last longer (BEAT/FIX PREMATURE EJACULATION, LAST LONGER IN BED), Keep it hard (BEAT/FIX ERECTILE DYSFUNCTION), Sex is a skill (IMPROVE SEX SKILLS), Overall Health (BOOST OVERALL HEALTH). Большинство заказов приходит без цели (покупатели не связаны с пользователем приложения) и не попадает ни в одну программу.
 - monetizationPerUser → Monetization per Active User: Monetization ÷ Active Users программы.
-- Lifetime, Estimated Revenue — ещё не подключены.
+- ltv → LTV: фиксированная оценка команды, $ на пользователя по цели онбординга (английский онбординг): Last longer $90,12, Keep it hard $90,49, Sex is a skill $90,86, Overall Health $89,65. Не зависит от периода и не считается из Amplitude.
+- LTV · Web, Estimated Revenue — ещё не подключены.
 
 ## Ограничения данных
 - Уроки с одинаковым headline/lesson_id в нескольких программах не учитываются ни в одной (нельзя понять, из какой программы открыт урок). Сильнее всего это занижает Keep it hard, Kegel Challenge и пары версий Sex is a skill.
@@ -96,7 +97,7 @@ const tools = [
       type: "object",
       properties: {
         program_id: { type: "string", description: "id программы, например last-longer" },
-        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement", "shareOfTraffic", "monetization", "monetizationPerUser"] },
+        metric: { type: "string", enum: ["totalUsers", "entryUsers", "pullRatio", "returnRate", "rating", "ratingCount", "shares", "shareOfEngagement", "shareOfTraffic", "monetization", "monetizationPerUser", "ltv"] },
         period: PERIOD,
         end_date: END_DATE,
         points: { type: "integer", minimum: 2, maximum: 13, description: "Сколько периодов вернуть" },

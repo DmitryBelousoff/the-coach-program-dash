@@ -439,8 +439,8 @@
     { key: "totalUsers", title: "Active Users", desc: "Уникальные пользователи, открывавшие контент программы за период", fmt: plain },
     { key: "entryUsers", title: "New Users", desc: "Выбрали цель этой программы в онбординге приложения за период", fmt: plain },
     { key: "pullRatio", title: "Active to New Ratio", desc: "Active Users ÷ New Users: сколько активных пользователей программы на одного нового", fmt: (v) => ({ val: nf2.format(v), unit: "×" }) },
-    { key: "lifetimeOrganic", title: "Lifetime · Organic", desc: "Средний lifetime пользователей, для которых программа стала точкой входа (органика)", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
-    { key: "lifetimeWeb", title: "Lifetime · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf0.format(v), unit: "дн." }) },
+    { key: "ltv", title: "LTV", static: true, desc: "Ожидаемая выручка с пользователя, выбравшего цель программы в онбординге (английский онбординг). Оценка команды, не зависит от периода", fmt: (v) => ({ val: nf2.format(v), unit: "$" }) },
+    { key: "lifetimeWeb", title: "LTV · Web", desc: "То же для пользователей, пришедших из веба", fmt: (v) => ({ val: nf2.format(v), unit: "$" }) },
     { key: "completionRate", title: "Completion Rate", cohort: true,
       desc: "Доля начавших программу (первый CurrentDay), кто дошёл до её последнего дня (CurrentDay с day = последний день) за длину программы + 50% (60-дневная — за 90 дней). Когорта — выбранный период, сдвинутый назад на это окно",
       fmt: (v, m) => ({ val: nf1.format(v * 100), unit: "%", sub: m.completionCohort ? `из ${nf0.format(m.completionCohort)} начавших${m.completionWindow ? ` · за ${nf0.format(m.completionWindow)} дн.` : ""}` : null }) },
@@ -633,7 +633,7 @@
         }
         const f = col.fmt(v, p.current);
         const value = `<span class="val">${f.val}</span>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}${f.sub ? `<span class="sub">${f.sub}</span>` : ""}`;
-        if (col.cohort) {
+        if (col.cohort || col.static) {
           return `<td><div class="cell"><div>${value}</div></div></td>`;
         }
         if (col.noDelta) {
