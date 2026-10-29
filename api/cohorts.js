@@ -20,7 +20,7 @@
 
 import {
   AMPLITUDE_HOST, DISPLAY_NAMES, ENTRY_GOALS, FIRST_TIME,
-  addDays, amplitudeAuth, amplitudeFetch, iso, lessonOpen, loadMapping, parseDate, selectPrograms,
+  addDays, amplitudeAuth, amplitudeFetch, iso, kegelProgram, lessonOpen, loadMapping, parseDate, selectPrograms, totalsBy,
 } from "./metrics.js";
 
 export const config = { maxDuration: 300 };
@@ -158,6 +158,47 @@ export default async function handler(req, res) {
   if (date > lastComplete) date = lastComplete;
 
   try {
+    // Analysis: of users who picked a goal in [from, to], the share who within `days` did
+    // something in a program other than the goal's (completed lesson, kegel workout, opened
+    // plan item), next to the same for the goal's own program.
+    if (req.query.debug === "crossover") {
+      const auth = amplitudeAuth();
+      const { programs } = selectPrograms((await loadMapping()).programs);
+      const range = { from: parseDate(String(req.query.from)), to: parseDate(String(req.query.to)) };
+      const days = Number(req.query.days || 7);
+      const follow = { from: range.from, to: addDays(range.to, days) };
+      const [lessons, kegel] = await Promise.all([
+        totalsBy(auth, { event_type: "LessonComplete", filters: [] }, "lesson_id", follow),
+        totalsBy(auth, { event_type: "KegelTrainingComplete", filters: [] }, "workout_id", follow),
+      ]);
+      const rawLessons = (ps) => ps.flatMap((x) => [...x.lessonIds].flatMap((k) => [...(lessons.raw.get(k) || [])]));
+      const workouts = (ps) => [...kegel.rawCounts.keys()].filter((w) => ps.some((x) => kegelProgram(w) === x.id));
+      const titles = (ps) => ps.flatMap((x) => [...x.headlines]);
+      const steps = (ps) => ({
+        lesson: { event_type: "LessonComplete", filters: [{ subprop_type: "event", subprop_key: "lesson_id", subprop_op: "is", subprop_value: rawLessons(ps) }] },
+        kegel: { event_type: "KegelTrainingComplete", filters: [{ subprop_type: "event", subprop_key: "workout_id", subprop_op: "is", subprop_value: workouts(ps) }] },
+        open: { event_type: "DailyPlanItemOpen", filters: [{ subprop_type: "event", subprop_key: "title", subprop_op: "is", subprop_value: titles(ps) }] },
+      });
+      const out = {};
+      for (const id of Object.keys(ENTRY_GOALS)) {
+        const main = programs.filter((x) => x.id === id), others = programs.filter((x) => x.id !== id);
+        const row = {};
+        for (const [who, ps] of [["other", others], ["main", main]]) {
+          for (const [kind, step] of Object.entries(steps(ps))) {
+            if (!step.filters[0].subprop_value.length) continue;
+            try {
+              const f = await funnel(auth, goalEvent(id), step, range, days);
+              row[`${who}_${kind}`] = { entered: f.entered, converted: f.converted, share: f.entered ? f.converted / f.entered : null };
+            } catch (e) { row[`${who}_${kind}`] = { error: e.message }; }
+          }
+        }
+        out[id] = row;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ range: { from: iso(range.from), to: iso(range.to) }, days, programs: out });
+      return;
+    }
+
     if (req.query.debug === "funnel") {
       const { programs } = selectPrograms((await loadMapping()).programs);
       const p = programs.find((x) => x.id === String(req.query.program || "last-longer"));
