@@ -1,8 +1,10 @@
 # The Coach — Program Dashboard
 
 Program Health — панель эффективности программ: метрики в разрезе программ
-(Active Users, New Users, Active to New Ratio, Lifetime, Completion Rate, Return Rate, User Satisfaction,
-Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
+(Active Users, New Users, Active to New Ratio, LTV, Completion Rate, Return Rate, User Satisfaction,
+Catalog Pull, Share of Engagement, Share of Traffic, Sharing, Monetization, Estimated Revenue).
+
+**Полное описание метрик, расчётов, допущений и упрощений — в [DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md).**
 
 Статический сайт без сборки, деплоится на Vercel как есть.
 
@@ -43,11 +45,11 @@ Catalog Pull, Share of Engagement, Sharing, Monetization, Estimated Revenue).
 - Только мужские программы: код программы или таблица не содержат `for_her`, `woman`, `female`, `menopause`; плюс явный список женских программ `FEMALE_PROGRAMS` (сейчас `sex_skill_app`).
 - Headline, который встречается в нескольких мужских программах, не учитывается ни в одной — по `title` нельзя понять, из какой программы открыт урок.
 - Программы без пользователей в текущем и предыдущем периоде скрываются.
-- Кегель (`KegelTrainingOpen`) и испанские заголовки пока не учитываются.
+- Кегель (`KegelTrainingOpen`) в Active Users не учитывается (кегель-тренировки есть только в Share of Engagement); заголовки на других языках не учитываются.
 
 Диагностика: `/api/metrics?debug=mapping` — какие таблицы использованы, какие программы исключены и какие headline общие.
 
-Остальные метрики пока демо и в живом режиме показываются как «—».
+Не подключены (в живом режиме «—»): LTV · Web, Estimated Revenue.
 
 ## Закономерности за 12 недель
 
